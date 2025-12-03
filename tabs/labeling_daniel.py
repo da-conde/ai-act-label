@@ -30,13 +30,17 @@ SKIPPED_FILENAME = "skipped_daniel.csv"
 ANNOTATOR_NAME = "daniel"  # fix für diesen Tab
 CORPUS_NAME = "label-corpus-v1"  # nur für Anzeige
 
+# Version-Counter für label.csv, um Cache zu invalidieren nach Speichern
+if "labelplan_version" not in st.session_state:
+    st.session_state["labelplan_version"] = 0
+
 
 # --------------------------------------------------------------------
-# Hilfsfunktionen: Kategorien
+# Hilfsfunktionen: Kategorien (mit Cache)
 # --------------------------------------------------------------------
 
-def _load_categories() -> Dict:
-    """categories.json von Google Drive laden."""
+def _load_categories_raw() -> Dict:
+    """categories.json von Google Drive laden (ohne Cache)."""
     try:
         data = load_json_from_drive(CATEGORIES_DRIVE_FILE_ID)
         if isinstance(data, dict):
@@ -47,6 +51,12 @@ def _load_categories() -> Dict:
     except Exception as e:
         st.error(f"Fehler beim Laden von Kategorien aus Google Drive: {e}")
         return {}
+
+
+@st.cache_data(show_spinner=False)
+def _cached_load_categories() -> Dict:
+    """Gecachte Variante für Kategorien."""
+    return _load_categories_raw()
 
 
 # --------------------------------------------------------------------
@@ -73,7 +83,6 @@ def _get_labelplan_folder_id() -> str:
 def _get_labelplan_file_id() -> str:
     """
     Liefert die fileId von label.csv in labelplan/.
-    (Falls du irgendwann mehrere Pläne hast, kann man das hier erweitern.)
     """
     labelplan_folder_id = _get_labelplan_folder_id()
     files = list_files_in_folder(labelplan_folder_id)
@@ -93,14 +102,13 @@ def _get_labelplan_file_id() -> str:
     )
 
 
-def _build_readme_index() -> Dict[str, str]:
+@st.cache_data(show_spinner=False)
+def _cached_readme_index(folder_id: str) -> Dict[str, str]:
     """
-    Baut ein Mapping filename -> file_id für alle Dateien im
+    Gecachtes Mapping filename -> file_id für alle Dateien im
     Korpus-Ordner (ohne Unterordner).
-    Erwartung: Spalte `filename` im Labelplan entspricht genau
-    dem Dateinamen im Drive-Ordner `label-corpus-v1`.
     """
-    files = list_files_in_folder(LABEL_CORPUS_DRIVE_FOLDER_ID)
+    files = list_files_in_folder(folder_id)
     index: Dict[str, str] = {}
     for f in files:
         # Ordner ausklammern
@@ -108,6 +116,21 @@ def _build_readme_index() -> Dict[str, str]:
             continue
         index[f["name"]] = f["id"]
     return index
+
+
+@st.cache_data(show_spinner=False)
+def _cached_load_labelplan(plan_file_id: str, version: int) -> pd.DataFrame:
+    """
+    Gecachter Loader für label.csv. Der Parameter `version` sorgt dafür,
+    dass nach jedem Speichern eine neue Version in den Cache geschrieben wird.
+    """
+    return load_csv_from_drive(plan_file_id)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_load_readme_text(file_id: str) -> str:
+    """README-Text pro Datei cachen."""
+    return load_text_from_drive(file_id)
 
 
 # --------------------------------------------------------------------
@@ -239,8 +262,6 @@ def _compute_progress(df_plan: pd.DataFrame, daniel_cols: List[str], skipped_ids
 
     - Eine README gilt als "done", wenn mindestens eine Daniel__-Spalte (0 oder 1) gesetzt ist
       ODER wenn sie in skipped_daniel.csv steht.
-    - Es müssen NICHT alle Kategorien gelabelt sein (wie im alten lokalen Code:
-      doc ist fertig, sobald es irgendein Label oder Skip gibt).
     """
     if df_plan is None or df_plan.empty:
         return {"total_docs": 0, "done_docs": 0, "done_mask": []}
@@ -293,7 +314,7 @@ def render():
     st.subheader("🧩 Labeling – Daniel")
 
     # ------------------------------------------------
-    # 1) label.csv aus Google Drive holen
+    # 1) label.csv aus Google Drive holen (gecached)
     # ------------------------------------------------
     try:
         plan_file_id = _get_labelplan_file_id()
@@ -302,7 +323,7 @@ def render():
         return
 
     try:
-        df_plan = load_csv_from_drive(plan_file_id)
+        df_plan = _cached_load_labelplan(plan_file_id, st.session_state["labelplan_version"])
     except Exception as e:
         st.error(f"Labeling-Plan konnte nicht geladen werden: {e}")
         return
@@ -319,18 +340,16 @@ def render():
         return
 
     # Mapping: Kategorie-Name <-> Daniel-Spalte
-    # z.B. "Daniel__Data_Source" -> Kategorie "Data_Source"
     cat_to_col: Dict[str, str] = {}
     for col in daniel_cols:
         cat_name = col.split("Daniel__", 1)[1].lstrip("_")
         cat_to_col[cat_name] = col
 
-    # Kategorien-Konfiguration laden und ggf. ergänzen
-    categories_cfg = _load_categories()
+    # Kategorien-Konfiguration (gecached) laden und ggf. ergänzen
+    categories_cfg = _cached_load_categories()
     categories: List[str] = []
     for cat in cat_to_col.keys():
         if cat not in categories_cfg:
-            # Kategorie ist im Plan vorhanden, aber (noch) nicht in categories.json definiert
             categories_cfg[cat] = {}
         categories.append(cat)
 
@@ -347,9 +366,9 @@ def render():
     st.metric("Bearbeitet", f"{prog['done_docs']} / {prog['total_docs']}")
 
     # ------------------------------------------------
-    # 4) README-Index (filename -> file_id) aufbauen
+    # 4) README-Index (filename -> file_id) aufbauen (gecached)
     # ------------------------------------------------
-    readme_index = _build_readme_index()
+    readme_index = _cached_readme_index(LABEL_CORPUS_DRIVE_FOLDER_ID)
     if not readme_index:
         st.error(
             "Im Korpus-Ordner auf Google Drive wurden keine README-Dateien gefunden. "
@@ -385,7 +404,7 @@ def render():
         return
 
     try:
-        text = load_text_from_drive(file_id)
+        text = _cached_load_readme_text(file_id)
     except Exception as e:
         st.error(f"README `{filename}` konnte nicht von Google Drive geladen werden: {e}")
         return
@@ -534,6 +553,9 @@ def render():
                     st.error(f"Labeling-Plan `label.csv` konnte nicht gespeichert werden: {e}")
                     return
 
+                # Cache invalidieren, indem wir die Version erhöhen
+                st.session_state["labelplan_version"] += 1
+
                 if "dl_manual_doc_index" in st.session_state:
                     del st.session_state["dl_manual_doc_index"]
 
@@ -583,6 +605,5 @@ def render():
             st.experimental_rerun()
 
 
-# optional, falls du in main.py sowas wie show_labeling_daniel() verwendest
 def show_labeling_daniel():
     render()
