@@ -1,5 +1,3 @@
-# tabs/categories.py
-
 import json
 from pathlib import Path
 from typing import Dict, Any, List
@@ -10,9 +8,8 @@ import streamlit as st
 # Pfad zur Categories-JSON
 # ----------------------------------------------------
 
-# Erwartet: categories.json liegt im Projekt-Hauptordner,
-# also z. B. /Users/.../projects/ai_act/categories.json
-CATEGORIES_PATH = Path("categories.json")
+# Jetzt: categories.json liegt im Unterordner "hub"
+CATEGORIES_PATH = Path("hub") / "categories.json"
 
 
 # ----------------------------------------------------
@@ -84,7 +81,7 @@ def render():
         Hier verwaltest du deine **Labeling-Kategorien** und die zugehörigen
         **Such-Queries** und **Satz-Keywords**.
         
-        - Die Daten werden in `categories.json` im Projektordner gespeichert.
+        - Die Daten werden in `hub/categories.json` im Projektordner gespeichert.
         - Du kannst **neue Kategorien anlegen** oder **bestehende bearbeiten / löschen**.
         """
     )

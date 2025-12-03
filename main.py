@@ -1,10 +1,10 @@
 import streamlit as st
 
-# Tabs importieren
 from tabs.ai_act_mapping import show_ai_act_mapping
-from tabs.categories import show_categories
 from tabs.labeling_daniel import show_labeling_daniel
 from tabs.labeling_marie import show_labeling_marie
+import tabs.categories as categories_tab  # <-- wichtig für render()
+
 
 def main():
     st.set_page_config(page_title="AI Act Labeling Tool", layout="wide")
@@ -18,19 +18,19 @@ def main():
         "Labeling Marie",
     ]
 
-    selected_tab = st.tabs(tabs)
+    st_tabs = st.tabs(tabs)
 
-    # Jede Tab-Funktion einem Tab zuordnen
-    with selected_tab[0]:
+    with st_tabs[0]:
         show_ai_act_mapping()
 
-    with selected_tab[1]:
-        show_categories()
+    with st_tabs[1]:
+        # nutzt deine render()-Funktion aus tabs/categories.py
+        categories_tab.render()
 
-    with selected_tab[2]:
+    with st_tabs[2]:
         show_labeling_daniel()
 
-    with selected_tab[3]:
+    with st_tabs[3]:
         show_labeling_marie()
 
 
