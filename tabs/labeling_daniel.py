@@ -1,5 +1,4 @@
 from typing import List, Dict
-import json
 import re
 import html
 import pandas as pd
@@ -19,14 +18,13 @@ from utils.gdrive import (
 # Konfiguration: Google Drive
 # --------------------------------------------------------------------
 
-# 👇 HIER deine Folder-ID von "label-corpus-v1" einsetzen!
+# Google-Drive-Ordner: label-corpus-v1 (DEINE ID)
 LABEL_CORPUS_DRIVE_FOLDER_ID = "1oOrVSlzR3sP7EYvIr5nzEgBF4KtJ2roJ"
 
 # categories.json auf Google Drive (selbe ID wie im Categories-Tab)
 CATEGORIES_DRIVE_FILE_ID = "1EmZHSfSwbEw4JYsyRYvVBSbY4g4FSOi5"
 
-# Dateien für Labels & Skips im gleichen Ordner wie der Korpus
-LABELS_FILENAME = "labels_daniel.csv"
+# Datei für Skips im gleichen Ordner wie der Korpus (kein Label-File!)
 SKIPPED_FILENAME = "skipped_daniel.csv"
 
 ANNOTATOR_NAME = "daniel"  # fix für diesen Tab
@@ -72,20 +70,27 @@ def _get_labelplan_folder_id() -> str:
     )
 
 
-def _list_labeling_plans() -> List[Dict]:
+def _get_labelplan_file_id() -> str:
     """
-    Listet alle CSV-Labeling-Pläne im Unterordner 'labelplan'.
-    Rückgabe: Liste von Dicts mit 'id', 'name', 'mimeType'.
+    Liefert die fileId von label.csv in labelplan/.
+    (Falls du irgendwann mehrere Pläne hast, kann man das hier erweitern.)
     """
-    try:
-        labelplan_folder_id = _get_labelplan_folder_id()
-    except Exception as e:
-        st.error(str(e))
-        return []
-
+    labelplan_folder_id = _get_labelplan_folder_id()
     files = list_files_in_folder(labelplan_folder_id)
-    csv_files = [f for f in files if f["name"].lower().endswith(".csv")]
-    return csv_files
+
+    # Bevorzugt explizit label.csv
+    for f in files:
+        if f["name"].lower() == "label.csv":
+            return f["id"]
+
+    # Fallback: erste CSV-Datei im Ordner
+    for f in files:
+        if f["name"].lower().endswith(".csv"):
+            return f["id"]
+
+    raise RuntimeError(
+        "In `labelplan/` wurde keine `label.csv` (oder sonstige CSV) gefunden."
+    )
 
 
 def _build_readme_index() -> Dict[str, str]:
@@ -190,24 +195,8 @@ def _highlight_keywords_multi(text: str, kw_color_pairs: List[Dict[str, str]]) -
 
 
 # --------------------------------------------------------------------
-# Laden / Speichern von Labels & Skips (Google Drive)
+# Skipped-Tracking (kleine Extra-CSV, aber KEIN Label-File)
 # --------------------------------------------------------------------
-
-def _load_labels() -> pd.DataFrame:
-    df = load_csv_from_drive_by_name(LABEL_CORPUS_DRIVE_FOLDER_ID, LABELS_FILENAME)
-    if df is None or df.empty:
-        return pd.DataFrame(
-            columns=["doc_id", "filename", "category", "label", "annotator"]
-        )
-    for col in ["doc_id", "filename", "category", "label", "annotator"]:
-        if col not in df.columns:
-            df[col] = ""
-    return df
-
-
-def _save_labels(df: pd.DataFrame):
-    save_csv_to_drive_by_name(df, LABEL_CORPUS_DRIVE_FOLDER_ID, LABELS_FILENAME)
-
 
 def _load_skipped_ids() -> List[str]:
     df = load_csv_from_drive_by_name(LABEL_CORPUS_DRIVE_FOLDER_ID, SKIPPED_FILENAME)
@@ -236,27 +225,42 @@ def _append_skipped_id(doc_id: str, filename: str):
 
 
 # --------------------------------------------------------------------
-# Fortschritt
+# Fortschritt – direkt aus label.csv (Daniel-Spalten)
 # --------------------------------------------------------------------
 
-def _compute_progress(df_plan, df_labels, skipped_ids) -> Dict:
+def _get_daniel_columns(df_plan: pd.DataFrame) -> List[str]:
+    """Alle Spalten vom Typ Daniel__<Kategorie>."""
+    return [c for c in df_plan.columns if c.startswith("Daniel__")]
+
+
+def _compute_progress(df_plan: pd.DataFrame, daniel_cols: List[str], skipped_ids: List[str]) -> Dict:
     if df_plan is None or df_plan.empty:
         return {"total_docs": 0, "done_docs": 0, "done_mask": []}
 
     doc_ids = df_plan["doc_id"].astype(str).tolist()
     total = len(doc_ids)
-    labeled_ids = (
-        set(df_labels["doc_id"].astype(str).unique())
-        if not df_labels.empty
-        else set()
-    )
     skipped_set = set(skipped_ids)
-    done_mask = [d in labeled_ids or d in skipped_set for d in doc_ids]
+
+    done_mask: List[bool] = []
+    for _, row in df_plan.iterrows():
+        doc_id = str(row["doc_id"])
+        if doc_id in skipped_set:
+            done_mask.append(True)
+            continue
+        # "Fertig", wenn für alle Daniel-Spalten ein Wert (0 oder 1) eingetragen ist
+        all_labeled = True
+        for col in daniel_cols:
+            val = row.get(col, None)
+            if pd.isna(val):
+                all_labeled = False
+                break
+        done_mask.append(all_labeled)
+
     done = sum(done_mask)
     return {"total_docs": total, "done_docs": done, "done_mask": done_mask}
 
 
-def _find_next_doc_index(df_plan, done_mask) -> int:
+def _find_next_doc_index(df_plan: pd.DataFrame, done_mask: List[bool]) -> int:
     if df_plan is None or df_plan.empty:
         return -1
     for i, done in enumerate(done_mask):
@@ -273,76 +277,52 @@ def render():
     st.subheader("🧩 Labeling – Daniel")
 
     # ------------------------------------------------
-    # 1) Labeling-Plan(e) aus Google Drive holen
+    # 1) label.csv aus Google Drive holen
     # ------------------------------------------------
-    plans = _list_labeling_plans()
-    if not plans:
-        st.warning(
-            "Kein Labeling-Plan gefunden. "
-            "Lege im Drive-Korpus-Ordner (`label-corpus-v1`) einen Unterordner `labelplan` mit einer CSV (z. B. `label.csv`) an."
-        )
+    try:
+        plan_file_id = _get_labelplan_file_id()
+    except Exception as e:
+        st.error(str(e))
         return
-
-    # Es gibt bei dir aktuell nur eine Datei (label.csv) – aber wir lassen die Logik flexibel.
-    if len(plans) == 1:
-        selected_idx = 0
-        st.caption(f"Labeling-Plan: **{plans[0]['name']}**")
-    else:
-        selected_idx = st.selectbox(
-            "Labeling-Plan auswählen",
-            options=list(range(len(plans))),
-            format_func=lambda i: plans[i]["name"],
-            key="dl_plan_select",
-        )
-
-    selected_plan = plans[selected_idx]
-    plan_file_id = selected_plan["id"]
 
     try:
         df_plan = load_csv_from_drive(plan_file_id)
     except Exception as e:
-        st.error(f"Labeling-Plan `{selected_plan['name']}` konnte nicht geladen werden: {e}")
+        st.error(f"Labeling-Plan konnte nicht geladen werden: {e}")
         return
 
     # ------------------------------------------------
-    # 2) Labels & Skips aus Google Drive
+    # 2) Daniel-Spalten & Kategorien aus dem Plan bestimmen
     # ------------------------------------------------
-    df_labels = _load_labels()
-    skipped = _load_skipped_ids()
-
-    # ------------------------------------------------
-    # 3) Kategorien laden & auf Labelplan mappen
-    # ------------------------------------------------
-    categories_cfg = _load_categories()
-    if not categories_cfg:
-        st.error("Es wurden keine Kategorien in `categories.json` (Google Drive) gefunden.")
-        return
-
-    # Kategorien, die im Labelplan für Daniel existieren (Spalten Daniel__...)
-    daniel_cols = [c for c in df_plan.columns if c.startswith("Daniel__")]
-    plan_categories = [c.split("Daniel__", 1)[1].lstrip("_") for c in daniel_cols]
-
-    categories: List[str] = []
-    for pc in plan_categories:
-        if pc in categories_cfg:
-            categories.append(pc)
-        else:
-            # Falls Kategorie nicht in categories.json konfiguriert ist:
-            # trotzdem anzeigen, aber ohne Keywords.
-            categories_cfg[pc] = {}
-            categories.append(pc)
-
-    if not categories:
+    daniel_cols = _get_daniel_columns(df_plan)
+    if not daniel_cols:
         st.error(
             "Im Labeling-Plan wurden keine Spalten vom Typ `Daniel__<Kategorie>` gefunden. "
             "Bitte prüfe die Spaltennamen in `label.csv`."
         )
         return
 
+    # Mapping: Kategorie-Name <-> Daniel-Spalte
+    # z.B. "Daniel__Data_Source" -> Kategorie "Data_Source"
+    cat_to_col: Dict[str, str] = {}
+    for col in daniel_cols:
+        cat_name = col.split("Daniel__", 1)[1].lstrip("_")
+        cat_to_col[cat_name] = col
+
+    # Kategorien-Konfiguration laden und ggf. ergänzen
+    categories_cfg = _load_categories()
+    categories: List[str] = []
+    for cat in cat_to_col.keys():
+        if cat not in categories_cfg:
+            # Kategorie ist im Plan vorhanden, aber (noch) nicht in categories.json definiert
+            categories_cfg[cat] = {}
+        categories.append(cat)
+
     # ------------------------------------------------
-    # 4) Fortschritt berechnen
+    # 3) Skips laden & Fortschritt berechnen
     # ------------------------------------------------
-    prog = _compute_progress(df_plan, df_labels, skipped)
+    skipped = _load_skipped_ids()
+    prog = _compute_progress(df_plan, daniel_cols, skipped)
     if prog["total_docs"] == 0:
         st.error("Der ausgewählte Labeling-Plan enthält keine Einträge.")
         return
@@ -351,7 +331,7 @@ def render():
     st.metric("Bearbeitet", f"{prog['done_docs']} / {prog['total_docs']}")
 
     # ------------------------------------------------
-    # 5) README-Index (filename -> file_id) aufbauen
+    # 4) README-Index (filename -> file_id) aufbauen
     # ------------------------------------------------
     readme_index = _build_readme_index()
     if not readme_index:
@@ -362,7 +342,7 @@ def render():
         return
 
     # ------------------------------------------------
-    # 6) Aktuelle README bestimmen
+    # 5) Aktuelle README bestimmen (Auto + Jump)
     # ------------------------------------------------
     manual_idx = st.session_state.get("dl_manual_doc_index", None)
     available_indices = set(df_plan["doc_index"].tolist())
@@ -388,7 +368,6 @@ def render():
         )
         return
 
-    text = ""
     try:
         text = load_text_from_drive(file_id)
     except Exception as e:
@@ -400,11 +379,11 @@ def render():
         f"({current_index+1}/{prog['total_docs']})"
     )
     st.caption(
-        f"doc_id: `{doc_id}` – Korpus: `{CORPUS_NAME}` – Plan: `{selected_plan['name']}`"
+        f"doc_id: `{doc_id}` – Korpus: `{CORPUS_NAME}` – Plan: `label.csv`"
     )
 
     # ------------------------------------------------
-    # 7) Keyword-Highlighting + Legende
+    # 6) Keyword-Highlighting + Legende
     # ------------------------------------------------
     color_palette = [
         "#ffe58a",  # gelb
@@ -476,15 +455,10 @@ def render():
     )
 
     # ------------------------------------------------
-    # 8) Labeling-UI
+    # 7) Labeling-UI – direkt auf Basis von label.csv (Daniel-Spalten)
     # ------------------------------------------------
     st.markdown("### Labels vergeben")
 
-    df_ann_doc = (
-        df_labels[df_labels["doc_id"].astype(str) == str(doc_id)]
-        if not df_labels.empty
-        else pd.DataFrame()
-    )
     label_widgets: Dict[str, str] = {}
 
     if len(categories) > 0:
@@ -494,16 +468,21 @@ def render():
 
     for cat, col in zip(categories, cols):
         with col:
+            plan_col = cat_to_col[cat]
+            val = row.get(plan_col, None)
             existing = None
-            if not df_ann_doc.empty and cat in df_ann_doc["category"].values:
-                existing = int(
-                    df_ann_doc[df_ann_doc["category"] == cat]["label"].iloc[-1]
-                )
+            if not pd.isna(val):
+                try:
+                    existing = int(val)
+                except Exception:
+                    existing = None
+
             default_val = (
                 ""
                 if existing is None
                 else ("Ja (1)" if existing == 1 else "Nein (0)")
             )
+
             label_widgets[cat] = st.segmented_control(
                 label=cat,
                 options=["", "Ja (1)", "Nein (0)"],
@@ -512,58 +491,32 @@ def render():
             )
 
     # ------------------------------------------------
-    # 9) Speichern oder Überspringen
+    # 8) Speichern oder Überspringen
     # ------------------------------------------------
     col1, col2 = st.columns(2)
 
     with col1:
         if st.button("💾 Label speichern & nächste README", key="dl_save_next"):
-            rows_new = []
-            for cat in categories:
-                val = label_widgets.get(cat, "")
-                if val == "":
-                    continue
-                label_value = 1 if "Ja (1)" in val else 0
-                rows_new.append(
-                    {
-                        "doc_id": doc_id,
-                        "filename": filename,
-                        "category": cat,
-                        "label": label_value,
-                        "annotator": ANNOTATOR_NAME,
-                    }
-                )
+            mask_doc = df_plan["doc_id"].astype(str) == str(doc_id)
+            if not mask_doc.any():
+                st.error("Aktuelle doc_id wurde im Labelplan nicht gefunden.")
+            else:
+                # Nur Daniel__-Spalten aktualisieren
+                for cat in categories:
+                    val = label_widgets.get(cat, "")
+                    plan_col = cat_to_col[cat]
+                    if val == "":
+                        # nichts ändern → bisherigen Wert beibehalten
+                        continue
+                    label_value = 1 if "Ja (1)" in val else 0
+                    df_plan.loc[mask_doc, plan_col] = label_value
 
-            if rows_new:
-                df_new = pd.DataFrame(rows_new)
-
-                # Alte Labels für diese doc_id & Annotator überschreiben
-                if not df_labels.empty:
-                    df_labels = df_labels[
-                        ~(
-                            (df_labels["annotator"] == ANNOTATOR_NAME)
-                            & (df_labels["doc_id"].astype(str) == str(doc_id))
-                        )
-                    ]
-                df_labels = pd.concat([df_labels, df_new], ignore_index=True)
-                _save_labels(df_labels)
-
-                # Labels zusätzlich im Labeling-Plan (Daniel-Spalten) speichern
+                # Plan nach Google Drive zurückschreiben (überschreibt label.csv)
                 try:
-                    df_plan_sheet = load_csv_from_drive(plan_file_id)
-                    mask_doc = df_plan_sheet["doc_id"].astype(str) == str(doc_id)
-                    if mask_doc.any():
-                        for r in rows_new:
-                            cat = r["category"]
-                            label_val = r["label"]
-                            col_name = f"Daniel__{cat}"
-                            if col_name in df_plan_sheet.columns:
-                                df_plan_sheet.loc[mask_doc, col_name] = label_val
-                    save_csv_to_drive(df_plan_sheet, plan_file_id)
+                    save_csv_to_drive(df_plan, plan_file_id)
                 except Exception as e:
-                    st.warning(
-                        f"Labels konnten nicht im Labeling-Plan `{selected_plan['name']}` gespeichert werden: {e}"
-                    )
+                    st.error(f"Labeling-Plan `label.csv` konnte nicht gespeichert werden: {e}")
+                    return
 
                 if "dl_manual_doc_index" in st.session_state:
                     del st.session_state["dl_manual_doc_index"]
@@ -573,12 +526,10 @@ def render():
                     st.rerun()
                 elif hasattr(st, "experimental_rerun"):
                     st.experimental_rerun()
-            else:
-                st.warning("Keine Labels vergeben.")
 
     with col2:
         if st.button("⏭ README überspringen", key="dl_skip_doc"):
-            _append_skipped_id(doc_id, filename)
+            _append_skipped_id(str(doc_id), filename)
             if "dl_manual_doc_index" in st.session_state:
                 del st.session_state["dl_manual_doc_index"]
             st.info("README übersprungen. Nächstes README wird geladen …")
@@ -597,9 +548,9 @@ def render():
     )
 
     def _format_doc_option(idx: int) -> str:
-        row = df_plan[df_plan["doc_index"] == idx].iloc[0]
-        pos = int(row["doc_index"]) + 1
-        return f"{pos:03d} – {row['filename']} (doc_id={row['doc_id']})"
+        row2 = df_plan[df_plan["doc_index"] == idx].iloc[0]
+        pos = int(row2["doc_index"]) + 1
+        return f"{pos:03d} – {row2['filename']} (doc_id={row2['doc_id']})"
 
     selected_jump_idx = st.selectbox(
         "README auswählen",
