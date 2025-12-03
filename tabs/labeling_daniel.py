@@ -18,7 +18,7 @@ from utils.gdrive import (
 # Konfiguration: Google Drive
 # --------------------------------------------------------------------
 
-# Google-Drive-Ordner: label-corpus-v1 (DEINE ID)
+# Google-Drive-Ordner: label-corpus-v1
 LABEL_CORPUS_DRIVE_FOLDER_ID = "1oOrVSlzR3sP7EYvIr5nzEgBF4KtJ2roJ"
 
 # categories.json auf Google Drive (selbe ID wie im Categories-Tab)
@@ -28,7 +28,7 @@ CATEGORIES_DRIVE_FILE_ID = "1EmZHSfSwbEw4JYsyRYvVBSbY4g4FSOi5"
 SKIPPED_FILENAME = "skipped_daniel.csv"
 
 ANNOTATOR_NAME = "daniel"  # fix für diesen Tab
-CORPUS_NAME = "label_corpus_v1"  # nur für Anzeige
+CORPUS_NAME = "label-corpus-v1"  # nur für Anzeige
 
 
 # --------------------------------------------------------------------
@@ -234,29 +234,45 @@ def _get_daniel_columns(df_plan: pd.DataFrame) -> List[str]:
 
 
 def _compute_progress(df_plan: pd.DataFrame, daniel_cols: List[str], skipped_ids: List[str]) -> Dict:
+    """
+    Fortschritt basierend auf label.csv:
+
+    - Eine README gilt als "done", wenn mindestens eine Daniel__-Spalte (0 oder 1) gesetzt ist
+      ODER wenn sie in skipped_daniel.csv steht.
+    - Es müssen NICHT alle Kategorien gelabelt sein (wie im alten lokalen Code:
+      doc ist fertig, sobald es irgendein Label oder Skip gibt).
+    """
     if df_plan is None or df_plan.empty:
         return {"total_docs": 0, "done_docs": 0, "done_mask": []}
 
-    doc_ids = df_plan["doc_id"].astype(str).tolist()
-    total = len(doc_ids)
-    skipped_set = set(skipped_ids)
+    skipped_set = set(str(s) for s in skipped_ids)
 
     done_mask: List[bool] = []
     for _, row in df_plan.iterrows():
         doc_id = str(row["doc_id"])
+
+        # Falls geskippt → fertig
         if doc_id in skipped_set:
             done_mask.append(True)
             continue
-        # "Fertig", wenn für alle Daniel-Spalten ein Wert (0 oder 1) eingetragen ist
-        all_labeled = True
+
+        # Fertig, wenn mindestens eine Daniel-Spalte gesetzt ist (0 oder 1)
+        any_label = False
         for col in daniel_cols:
             val = row.get(col, None)
             if pd.isna(val):
-                all_labeled = False
-                break
-        done_mask.append(all_labeled)
+                continue
+            # Leere Strings wie "" ignorieren
+            if isinstance(val, str) and val.strip() == "":
+                continue
+            any_label = True
+            break
 
+        done_mask.append(any_label)
+
+    total = len(done_mask)
     done = sum(done_mask)
+
     return {"total_docs": total, "done_docs": done, "done_mask": done_mask}
 
 
