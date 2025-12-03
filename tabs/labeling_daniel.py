@@ -30,14 +30,6 @@ SKIPPED_FILENAME = "skipped_daniel.csv"
 ANNOTATOR_NAME = "daniel"  # fix für diesen Tab
 CORPUS_NAME = "label-corpus-v1"  # nur für Anzeige
 
-# --------------------------------------------------------------------
-# Session State Initialisierung
-# --------------------------------------------------------------------
-
-# Version-Counter für label.csv, um Cache zu invalidieren nach Speichern
-if "labelplan_version" not in st.session_state:
-    st.session_state["labelplan_version"] = 0
-
 
 # --------------------------------------------------------------------
 # Hilfsfunktionen: Kategorien (mit Cache)
@@ -316,6 +308,10 @@ def _find_next_doc_index(df_plan: pd.DataFrame, done_mask: List[bool]) -> int:
 
 def render():
     st.subheader("🧩 Labeling – Daniel")
+
+    # Session-State-Init NUR HIER (damit garantiert vorhanden)
+    if "labelplan_version" not in st.session_state:
+        st.session_state["labelplan_version"] = 0
 
     # ------------------------------------------------
     # 1) label.csv aus Google Drive holen (gecached)
