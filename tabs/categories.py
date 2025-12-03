@@ -1,15 +1,16 @@
 import json
-from pathlib import Path
 from typing import Dict, Any, List
 
 import streamlit as st
 
+from utils.gdrive import load_json_from_drive, save_json_to_drive
+
 # ----------------------------------------------------
-# Pfad zur Categories-JSON
+# Google Drive Konfiguration
 # ----------------------------------------------------
 
-# Jetzt: categories.json liegt im Unterordner "hub"
-CATEGORIES_PATH = Path("hub") / "categories.json"
+# File-ID deiner categories.json auf Google Drive
+CATEGORIES_DRIVE_FILE_ID = "1EmZHSfSwbEw4JYsyRYvVBSbY4g4FSOi5"
 
 
 # ----------------------------------------------------
@@ -18,39 +19,37 @@ CATEGORIES_PATH = Path("hub") / "categories.json"
 
 def _load_categories() -> Dict[str, Any]:
     """
-    Lädt die Kategorien aus categories.json.
-    Struktur wie in deinem Beispiel:
+    Lädt die Kategorien aus der JSON-Datei auf Google Drive.
+    Erwartet eine Struktur wie:
     {
       "Data_Source": { ... },
       "Synthetic_Disclosure": { ... },
       ...
     }
     """
-    if not CATEGORIES_PATH.exists():
-        return {}
-
     try:
-        with CATEGORIES_PATH.open("r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = load_json_from_drive(CATEGORIES_DRIVE_FILE_ID)
+
         if isinstance(data, dict):
             return data
         else:
-            st.warning("Die Datei categories.json enthält kein Dict an der obersten Ebene.")
+            st.warning(
+                "Die Datei `categories.json` auf Google Drive enthält kein Dict auf oberster Ebene."
+            )
             return {}
     except Exception as e:
-        st.error(f"Fehler beim Laden von categories.json: {e}")
+        st.error(f"Fehler beim Laden von Kategorien aus Google Drive: {e}")
         return {}
 
 
 def _save_categories(categories: Dict[str, Any]) -> None:
     """
-    Speichert die Kategorien zurück in categories.json.
+    Speichert die Kategorien zurück in die JSON-Datei auf Google Drive.
     """
     try:
-        with CATEGORIES_PATH.open("w", encoding="utf-8") as f:
-            json.dump(categories, f, indent=2, ensure_ascii=False, sort_keys=True)
+        save_json_to_drive(categories, CATEGORIES_DRIVE_FILE_ID)
     except Exception as e:
-        st.error(f"Fehler beim Speichern von categories.json: {e}")
+        st.error(f"Fehler beim Speichern von Kategorien nach Google Drive: {e}")
 
 
 # ----------------------------------------------------
@@ -81,11 +80,12 @@ def render():
         Hier verwaltest du deine **Labeling-Kategorien** und die zugehörigen
         **Such-Queries** und **Satz-Keywords**.
         
-        - Die Daten werden in `hub/categories.json` im Projektordner gespeichert.
+        - Die Daten werden in einer `categories.json` Datei auf **Google Drive** gespeichert.
         - Du kannst **neue Kategorien anlegen** oder **bestehende bearbeiten / löschen**.
         """
     )
 
+    # Kategorien aus Google Drive laden
     categories = _load_categories()
 
     # ------------------------------------------------
@@ -93,7 +93,9 @@ def render():
     # ------------------------------------------------
     with st.expander("📚 Überblick: vorhandene Kategorien", expanded=True):
         if not categories:
-            st.info("Es sind aktuell noch keine Kategorien in `categories.json` definiert.")
+            st.info(
+                "Es sind aktuell noch keine Kategorien in `categories.json` auf Google Drive definiert."
+            )
         else:
             st.write(f"**Anzahl Kategorien:** {len(categories)}")
             st.write(", ".join(sorted(categories.keys())))
@@ -132,7 +134,9 @@ def render():
             placeholder="Kurzbeschreibung der Kategorie (wird im Labeling angezeigt)",
         )
 
-        st.caption("**Dataset-Suchqueries (positiv / negativ)** – jeweils eine Zeile pro Eintrag")
+        st.caption(
+            "**Dataset-Suchqueries (positiv / negativ)** – jeweils eine Zeile pro Eintrag"
+        )
         new_ds_pos = st.text_area(
             "Dataset-Suchqueries (positiv)",
             value="",
@@ -149,7 +153,9 @@ def render():
             placeholder="z. B.\nreal-world dataset\nreal data only",
         )
 
-        st.caption("**Satz-Keywords (positiv / negativ)** – jeweils eine Zeile pro Phrase")
+        st.caption(
+            "**Satz-Keywords (positiv / negativ)** – jeweils eine Zeile pro Phrase"
+        )
         new_sent_pos = st.text_area(
             "Satz-Keywords (positiv)",
             value="",
@@ -232,7 +238,9 @@ def render():
             height=100,
         )
 
-        st.caption("**Dataset-Suchqueries (positiv / negativ)** – jeweils eine Zeile pro Eintrag")
+        st.caption(
+            "**Dataset-Suchqueries (positiv / negativ)** – jeweils eine Zeile pro Eintrag"
+        )
 
         edit_ds_pos = st.text_area(
             "Dataset-Suchqueries (positiv)",
@@ -252,7 +260,9 @@ def render():
             height=120,
         )
 
-        st.caption("**Satz-Keywords (positiv / negativ)** – jeweils eine Zeile pro Phrase")
+        st.caption(
+            "**Satz-Keywords (positiv / negativ)** – jeweils eine Zeile pro Phrase"
+        )
 
         edit_sent_pos = st.text_area(
             "Satz-Keywords (positiv)",
@@ -325,7 +335,7 @@ def render():
     st.markdown("---")
 
     # Optional: Roh-JSON anzeigen
-    with st.expander("🧾 Rohansicht categories.json"):
+    with st.expander("🧾 Rohansicht Kategorien (Google Drive JSON)"):
         st.code(
             json.dumps(categories, indent=2, ensure_ascii=False, sort_keys=True),
             language="json",
