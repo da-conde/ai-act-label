@@ -30,6 +30,10 @@ SKIPPED_FILENAME = "skipped_daniel.csv"
 ANNOTATOR_NAME = "daniel"  # fix für diesen Tab
 CORPUS_NAME = "label-corpus-v1"  # nur für Anzeige
 
+# --------------------------------------------------------------------
+# Session State Initialisierung
+# --------------------------------------------------------------------
+
 # Version-Counter für label.csv, um Cache zu invalidieren nach Speichern
 if "labelplan_version" not in st.session_state:
     st.session_state["labelplan_version"] = 0
