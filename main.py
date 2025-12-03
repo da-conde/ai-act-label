@@ -1,9 +1,9 @@
 import streamlit as st
 
-from tabs.ai_act_mapping import show_ai_act_mapping
+import tabs.ai_act_mapping as ai_act_mapping_tab
+import tabs.categories as categories_tab
 from tabs.labeling_daniel import show_labeling_daniel
 from tabs.labeling_marie import show_labeling_marie
-import tabs.categories as categories_tab  # <-- wichtig für render()
 
 
 def main():
@@ -20,16 +20,19 @@ def main():
 
     st_tabs = st.tabs(tabs)
 
+    # 1) AI Act Mapping Tab
     with st_tabs[0]:
-        show_ai_act_mapping()
+        ai_act_mapping_tab.render()
 
+    # 2) Categories Tab
     with st_tabs[1]:
-        # nutzt deine render()-Funktion aus tabs/categories.py
         categories_tab.render()
 
+    # 3) Labeling Daniel Tab
     with st_tabs[2]:
         show_labeling_daniel()
 
+    # 4) Labeling Marie Tab
     with st_tabs[3]:
         show_labeling_marie()
 
