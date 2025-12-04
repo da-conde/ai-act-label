@@ -388,14 +388,30 @@ def render():
     st.subheader("🧩 Labeling – Marie")
 
     # Session-State-Init (damit labelplan_version immer existiert)
-    if "labelplan_version_marie" not in st.session_state:
-        st.session_state["labelplan_version_marie"] = 0
+    if "labelplan_version" not in st.session_state:
+        st.session_state["labelplan_version"] = 0
 
-    # Optional: Button zum manuellen Reload der Kategorien
+    # Optional: Buttons für manuellen Reload
     with st.expander("⚙️ Optionen", expanded=False):
-        if st.button("🔄 Kategorien aus Drive neu laden", key="reload_categories_btn_marie"):
+        if st.button("🔄 Kategorien aus Drive neu laden", key="reload_categories_marie_btn"):
             _reload_categories()
             st.info("Kategorien neu geladen.")
+            if hasattr(st, "experimental_rerun"):
+                st.experimental_rerun()
+            else:
+                st.rerun()
+
+        # NEU: README-Index-Cache leeren
+        if st.button("🔄 README-Index neu laden", key="reload_readme_index_marie_btn"):
+            try:
+                _cached_readme_index.clear()
+            except Exception:
+                try:
+                    st.cache_data.clear()
+                except Exception:
+                    pass
+
+            st.success("README-Index-Cache geleert. Seite wird neu geladen …")
             if hasattr(st, "experimental_rerun"):
                 st.experimental_rerun()
             else:
@@ -412,8 +428,7 @@ def render():
 
     try:
         df_plan_remote = _cached_load_labelplan(
-            plan_file_id,
-            st.session_state["labelplan_version_marie"],
+            plan_file_id, st.session_state["labelplan_version"]
         )
     except Exception as e:
         st.error(f"Labeling-Plan konnte nicht geladen werden: {e}")
@@ -632,6 +647,7 @@ def render():
                 else ("Ja (1)" if existing == 1 else "Nein (0)")
             )
 
+            # eigener Key, damit nichts mit Daniel kollidiert
             label_widgets[cat] = st.segmented_control(
                 label=cat,
                 options=["", "Ja (1)", "Nein (0)"],
@@ -705,7 +721,7 @@ def render():
                 try:
                     save_csv_to_drive(df_local, plan_file_id)
                     st.session_state["df_dirty_marie"] = False
-                    st.session_state["labelplan_version_marie"] += 1
+                    st.session_state["labelplan_version"] += 1
                     st.success("Labels erfolgreich nach Google Drive hochgeladen.")
                 except Exception as e:
                     st.error(f"Fehler beim Hochladen nach Drive: {e}")
