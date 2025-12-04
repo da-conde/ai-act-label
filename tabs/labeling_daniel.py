@@ -69,9 +69,11 @@ def _reload_categories():
 # Hilfsfunktionen: Korpus-Struktur auf Drive
 # --------------------------------------------------------------------
 
+@st.cache_data(show_spinner=False)
 def _get_labelplan_folder_id() -> str:
     """
     Sucht im Korpus-Ordner einen Unterordner mit Namen 'labelplan'.
+    Dank cache_data nur einmal pro Session.
     """
     folders = list_files_in_folder(
         LABEL_CORPUS_DRIVE_FOLDER_ID,
@@ -86,9 +88,11 @@ def _get_labelplan_folder_id() -> str:
     )
 
 
+@st.cache_data(show_spinner=False)
 def _get_labelplan_file_id() -> str:
     """
     Liefert die fileId von label.csv in labelplan/.
+    Ebenfalls gecached, damit nicht bei jedem Re-Run erneut gesucht wird.
     """
     labelplan_folder_id = _get_labelplan_folder_id()
     files = list_files_in_folder(labelplan_folder_id)
