@@ -69,11 +69,9 @@ def _reload_categories():
 # Hilfsfunktionen: Korpus-Struktur auf Drive
 # --------------------------------------------------------------------
 
-@st.cache_data(show_spinner=False)
 def _get_labelplan_folder_id() -> str:
     """
     Sucht im Korpus-Ordner einen Unterordner mit Namen 'labelplan'.
-    Dank cache_data nur einmal pro Session.
     """
     folders = list_files_in_folder(
         LABEL_CORPUS_DRIVE_FOLDER_ID,
@@ -88,11 +86,9 @@ def _get_labelplan_folder_id() -> str:
     )
 
 
-@st.cache_data(show_spinner=False)
 def _get_labelplan_file_id() -> str:
     """
     Liefert die fileId von label.csv in labelplan/.
-    Ebenfalls gecached, damit nicht bei jedem Re-Run erneut gesucht wird.
     """
     labelplan_folder_id = _get_labelplan_folder_id()
     files = list_files_in_folder(labelplan_folder_id)
@@ -133,7 +129,6 @@ def _cached_load_labelplan(plan_file_id: str, version: int) -> pd.DataFrame:
     """
     Gecachter Loader für label.csv. Der Parameter `version` sorgt dafür,
     dass nach jedem Speichern eine neue Version in den Cache geschrieben wird.
-    (labelplan_version liegt global in st.session_state und wird von Daniel & Marie geteilt)
     """
     return load_csv_from_drive(plan_file_id)
 
@@ -145,12 +140,54 @@ def _cached_load_readme_text(file_id: str) -> str:
 
 
 # --------------------------------------------------------------------
-# Keyword-Highlighting
+# YAML-Frontmatter entfernen & Sanitizer
 # --------------------------------------------------------------------
+
+def _strip_frontmatter(text: str) -> str:
+    """
+    Entfernt optionales YAML-Frontmatter am Anfang (HuggingFace-Style):
+
+    ---
+    license: ...
+    configs:
+      - ...
+    ---
+    # Überschrift
+
+    Alles zwischen den beiden '---'-Linien am Anfang wird entfernt.
+    """
+    lines = text.splitlines()
+    if not lines:
+        return text
+
+    # erste nicht-leere Zeile suchen
+    first_non_empty_idx = None
+    for i, line in enumerate(lines):
+        if line.strip():
+            first_non_empty_idx = i
+            break
+
+    if first_non_empty_idx is None:
+        return text
+
+    if lines[first_non_empty_idx].strip() != "---":
+        # kein Frontmatter
+        return text
+
+    # zweite '---'-Zeile suchen
+    for j in range(first_non_empty_idx + 1, len(lines)):
+        if lines[j].strip() == "---":
+            # alles danach behalten
+            return "\n".join(lines[j + 1:])
+
+    # falls keine zweite --- gefunden → Text unverändert lassen
+    return text
+
 
 def _sanitize_text_for_html(text: str) -> str:
     """
-    Entfernt problematische Unicode-Zeichen und escaped HTML.
+    Entfernt problematische Unicode-Zeichen, aber KEIN html.escape mehr,
+    damit Markdown / Sonderzeichen erhalten bleiben.
     """
     cleaned_chars = []
     for ch in text:
@@ -163,8 +200,12 @@ def _sanitize_text_for_html(text: str) -> str:
             continue
         cleaned_chars.append(ch)
     safe = "".join(cleaned_chars)
-    return html.escape(safe)
+    return safe
 
+
+# --------------------------------------------------------------------
+# Keyword-Highlighting
+# --------------------------------------------------------------------
 
 def _collect_positive_keywords_by_category(
     categories_cfg: Dict,
@@ -346,9 +387,9 @@ def _find_next_doc_index(df_plan: pd.DataFrame, done_mask: List[bool]) -> int:
 def render():
     st.subheader("🧩 Labeling – Marie")
 
-    # Session-State-Init (damit labelplan_version immer existiert – geteilt mit Daniel)
-    if "labelplan_version" not in st.session_state:
-        st.session_state["labelplan_version"] = 0
+    # Session-State-Init (damit labelplan_version immer existiert)
+    if "labelplan_version_marie" not in st.session_state:
+        st.session_state["labelplan_version_marie"] = 0
 
     # Optional: Button zum manuellen Reload der Kategorien
     with st.expander("⚙️ Optionen", expanded=False):
@@ -370,13 +411,16 @@ def render():
         return
 
     try:
-        df_plan_remote = _cached_load_labelplan(plan_file_id, st.session_state["labelplan_version"])
+        df_plan_remote = _cached_load_labelplan(
+            plan_file_id,
+            st.session_state["labelplan_version_marie"],
+        )
     except Exception as e:
         st.error(f"Labeling-Plan konnte nicht geladen werden: {e}")
         return
 
     # ------------------------------------------------
-    # 1a) Lokale Session-Kopie initialisieren (Batch-Editing für Marie)
+    # 1a) Lokale Session-Kopie initialisieren (Batch-Editing)
     # ------------------------------------------------
     if "df_plan_marie" not in st.session_state:
         st.session_state["df_plan_marie"] = df_plan_remote.copy()
@@ -464,10 +508,14 @@ def render():
         return
 
     try:
-        text = _cached_load_readme_text(file_id)
+        raw_text = _cached_load_readme_text(file_id)
     except Exception as e:
         st.error(f"README `{filename}` konnte nicht von Google Drive geladen werden: {e}")
         return
+
+    # YAML-Frontmatter entfernen und Text „säubern“
+    text = _strip_frontmatter(raw_text)
+    text = _sanitize_text_for_html(text)
 
     st.markdown(
         f"**Aktuelles README:** `{filename}` "
@@ -499,23 +547,25 @@ def render():
     cat_to_keywords = _collect_positive_keywords_by_category(categories_cfg, categories)
 
     # Keyword-Color-Paare bauen (für das eigentliche Highlighting)
-    kw_color_pairs = []
+    kw_color_pairs: List[Dict[str, str]] = []
     for cat, kws in cat_to_keywords.items():
         color = cat_to_color.get(cat, "#ffe58a")
         for kw in kws:
             kw_color_pairs.append({"keyword": kw, "color": color})
 
     st.markdown("#### README-Inhalt (mit Keyword-Highlighting)")
-    if kw_color_pairs:
-        highlighted_html = _highlight_keywords_multi(text, kw_color_pairs)
-    else:
-        highlighted_html = _sanitize_text_for_html(text)
 
+    if kw_color_pairs:
+        marked_text = _highlight_keywords_multi(text, kw_color_pairs)
+    else:
+        marked_text = text
+
+    # 👉 Scrollbarer Kasten mit dem Readme-Inhalt
     st.markdown(
         f"""
         <div style="max-height:500px;overflow-y:auto;padding:0.75rem;
         border:1px solid #ddd;border-radius:0.5rem;background-color:#fafafa;">
-        {highlighted_html}
+        {marked_text}
         </div>
         """,
         unsafe_allow_html=True,
@@ -582,7 +632,6 @@ def render():
                 else ("Ja (1)" if existing == 1 else "Nein (0)")
             )
 
-            # Wichtig: eigene Keys für Marie, damit nichts mit Daniel kollidiert
             label_widgets[cat] = st.segmented_control(
                 label=cat,
                 options=["", "Ja (1)", "Nein (0)"],
@@ -656,7 +705,7 @@ def render():
                 try:
                     save_csv_to_drive(df_local, plan_file_id)
                     st.session_state["df_dirty_marie"] = False
-                    st.session_state["labelplan_version"] += 1
+                    st.session_state["labelplan_version_marie"] += 1
                     st.success("Labels erfolgreich nach Google Drive hochgeladen.")
                 except Exception as e:
                     st.error(f"Fehler beim Hochladen nach Drive: {e}")
