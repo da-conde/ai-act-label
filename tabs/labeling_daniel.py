@@ -350,7 +350,10 @@ def render():
         if st.button("🔄 Kategorien aus Drive neu laden", key="reload_categories_btn"):
             _reload_categories()
             st.info("Kategorien neu geladen.")
-            st.experimental_rerun() if hasattr(st, "experimental_rerun") else st.rerun()
+            if hasattr(st, "experimental_rerun"):
+                st.experimental_rerun()
+            else:
+                st.rerun()
 
     # ------------------------------------------------
     # 1) label.csv aus Google Drive holen (gecached)
@@ -362,10 +365,20 @@ def render():
         return
 
     try:
-        df_plan = _cached_load_labelplan(plan_file_id, st.session_state["labelplan_version"])
+        df_plan_remote = _cached_load_labelplan(plan_file_id, st.session_state["labelplan_version"])
     except Exception as e:
         st.error(f"Labeling-Plan konnte nicht geladen werden: {e}")
         return
+
+    # ------------------------------------------------
+    # 1a) Lokale Session-Kopie initialisieren (Batch-Editing)
+    # ------------------------------------------------
+    if "df_plan_daniel" not in st.session_state:
+        st.session_state["df_plan_daniel"] = df_plan_remote.copy()
+        st.session_state["df_dirty_daniel"] = False
+
+    # Ab hier IMMER mit der Session-Kopie arbeiten
+    df_plan = st.session_state["df_plan_daniel"]
 
     # ------------------------------------------------
     # 2) Daniel-Spalten & Kategorien aus dem Plan bestimmen
@@ -536,7 +549,7 @@ def render():
     )
 
     # ------------------------------------------------
-    # 7) Labeling-UI – direkt auf Basis von label.csv (Daniel-Spalten)
+    # 7) Labeling-UI – direkt auf Basis der Session-Kopie (Daniel-Spalten)
     # ------------------------------------------------
     st.markdown("### Labels vergeben")
 
@@ -572,17 +585,17 @@ def render():
             )
 
     # ------------------------------------------------
-    # 8) Speichern oder Überspringen
+    # 8) Speichern oder Überspringen (nur lokal in Session-Kopie)
     # ------------------------------------------------
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("💾 Label speichern & nächste README", key="dl_save_next"):
+        if st.button("💾 Label lokal speichern & nächste README", key="dl_save_next"):
             mask_doc = df_plan["doc_id"].astype(str) == str(doc_id)
             if not mask_doc.any():
                 st.error("Aktuelle doc_id wurde im Labelplan nicht gefunden.")
             else:
-                # Nur Daniel__-Spalten aktualisieren
+                # Nur Daniel__-Spalten in der Session-Kopie aktualisieren
                 for cat in categories:
                     val = label_widgets.get(cat, "")
                     plan_col = cat_to_col[cat]
@@ -592,24 +605,18 @@ def render():
                     label_value = 1 if "Ja (1)" in val else 0
                     df_plan.loc[mask_doc, plan_col] = label_value
 
-                # Plan nach Google Drive zurückschreiben (überschreibt label.csv)
-                try:
-                    save_csv_to_drive(df_plan, plan_file_id)
-                except Exception as e:
-                    st.error(f"Labeling-Plan `label.csv` konnte nicht gespeichert werden: {e}")
-                    return
-
-                # Cache invalidieren, indem wir die Version erhöhen
-                st.session_state["labelplan_version"] += 1
+                # Session-Kopie & Dirty-Flag aktualisieren
+                st.session_state["df_plan_daniel"] = df_plan
+                st.session_state["df_dirty_daniel"] = True
 
                 if "dl_manual_doc_index" in st.session_state:
                     del st.session_state["dl_manual_doc_index"]
 
-                st.success("Labels gespeichert! Nächstes README wird geladen …")
-                if hasattr(st, "rerun"):
-                    st.rerun()
-                elif hasattr(st, "experimental_rerun"):
+                st.success("Labels lokal gespeichert! Nächstes README wird geladen …")
+                if hasattr(st, "experimental_rerun"):
                     st.experimental_rerun()
+                else:
+                    st.rerun()
 
     with col2:
         if st.button("⏭ README überspringen", key="dl_skip_doc"):
@@ -617,11 +624,40 @@ def render():
             if "dl_manual_doc_index" in st.session_state:
                 del st.session_state["dl_manual_doc_index"]
             st.info("README übersprungen. Nächstes README wird geladen …")
-            if hasattr(st, "rerun"):
-                st.rerun()
-            elif hasattr(st, "experimental_rerun"):
+            if hasattr(st, "experimental_rerun"):
                 st.experimental_rerun()
+            else:
+                st.rerun()
 
+    # ------------------------------------------------
+    # 9) Synchronisation mit Google Drive (Batch-Upload)
+    # ------------------------------------------------
+    st.markdown("---")
+    st.markdown("### Synchronisation mit Google Drive")
+
+    col_sync1, col_sync2 = st.columns(2)
+    with col_sync1:
+        dirty = st.session_state.get("df_dirty_daniel", False)
+        status_text = "🟡 nicht hochgeladene Änderungen" if dirty else "🟢 alle Änderungen auf Drive"
+        st.write(f"Status: {status_text}")
+
+    with col_sync2:
+        if st.button("⬆️ Labels nach Drive hochladen", key="dl_upload_drive"):
+            df_local = st.session_state.get("df_plan_daniel", None)
+            if df_local is None:
+                st.warning("Keine lokalen Labels zum Hochladen gefunden.")
+            else:
+                try:
+                    save_csv_to_drive(df_local, plan_file_id)
+                    st.session_state["df_dirty_daniel"] = False
+                    st.session_state["labelplan_version"] += 1
+                    st.success("Labels erfolgreich nach Google Drive hochgeladen.")
+                except Exception as e:
+                    st.error(f"Fehler beim Hochladen nach Drive: {e}")
+
+    # ------------------------------------------------
+    # 10) Jump zu bestimmter README
+    # ------------------------------------------------
     st.markdown("---")
     st.markdown("### Zu bestimmter README springen")
 
@@ -645,10 +681,10 @@ def render():
 
     if st.button("🔁 Zu dieser README springen", key="dl_jump_button"):
         st.session_state["dl_manual_doc_index"] = int(selected_jump_idx)
-        if hasattr(st, "rerun"):
-            st.rerun()
-        elif hasattr(st, "experimental_rerun"):
+        if hasattr(st, "experimental_rerun"):
             st.experimental_rerun()
+        else:
+            st.rerun()
 
 
 def show_labeling_daniel():
