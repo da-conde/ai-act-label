@@ -158,6 +158,8 @@ def _collect_positive_keywords_by_category(
     """
     Liefert pro Kategorie die POS-Keywords:
       {category_name: [kw1, kw2, ...]}
+
+    Priorisiert das Feld "sentence_keywords_positive" aus categories.json.
     """
     result: Dict[str, List[str]] = {}
     for cat in categories_to_label:
@@ -188,7 +190,7 @@ def _highlight_keywords_multi(text: str, kw_color_pairs: List[Dict[str, str]]) -
         return safe_text
 
     highlighted = safe_text
-    # längere Keywords zuerst
+    # längere Keywords zuerst → stabileres Matching
     sorted_pairs = sorted(
         kw_color_pairs,
         key=lambda x: len(x["keyword"]),
@@ -309,7 +311,7 @@ def _find_next_doc_index(df_plan: pd.DataFrame, done_mask: List[bool]) -> int:
 def render():
     st.subheader("🧩 Labeling – Daniel")
 
-    # Session-State-Init NUR HIER (damit garantiert vorhanden)
+    # Session-State-Init (damit labelplan_version immer existiert)
     if "labelplan_version" not in st.session_state:
         st.session_state["labelplan_version"] = 0
 
@@ -418,8 +420,9 @@ def render():
     )
 
     # ------------------------------------------------
-    # 6) Keyword-Highlighting + Legende
+    # 6) Keyword-Highlighting + Legende (aus sentence_keywords_positive)
     # ------------------------------------------------
+    # Farben pro Kategorie (einfaches Set – wird zyklisch genutzt)
     color_palette = [
         "#ffe58a",  # gelb
         "#ffcccc",  # rosa
@@ -434,8 +437,10 @@ def render():
     for i, cat in enumerate(categories):
         cat_to_color[cat] = color_palette[i % len(color_palette)]
 
+    # Positive Satz-Keywords pro Kategorie aus categories.json holen
     cat_to_keywords = _collect_positive_keywords_by_category(categories_cfg, categories)
 
+    # Keyword-Color-Paare bauen (für das eigentliche Highlighting)
     kw_color_pairs = []
     for cat, kws in cat_to_keywords.items():
         color = cat_to_color.get(cat, "#ffe58a")
@@ -458,6 +463,7 @@ def render():
         unsafe_allow_html=True,
     )
 
+    # Legende horizontal mit Farben pro Kategorie
     st.markdown("##### Legende für Highlights")
     max_per_row = 4
     cats = categories
