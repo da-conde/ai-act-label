@@ -32,11 +32,11 @@ CORPUS_NAME = "label-corpus-v1"  # nur für Anzeige
 
 
 # --------------------------------------------------------------------
-# Hilfsfunktionen: Kategorien (mit Cache)
+# Hilfsfunktionen: Kategorien (OHNE Cache, immer aktuelle JSON)
 # --------------------------------------------------------------------
 
 def _load_categories_raw() -> Dict:
-    """categories.json von Google Drive laden (ohne Cache)."""
+    """categories.json von Google Drive laden (immer aktuell, kein Cache)."""
     try:
         data = load_json_from_drive(CATEGORIES_DRIVE_FILE_ID)
         if isinstance(data, dict):
@@ -47,12 +47,6 @@ def _load_categories_raw() -> Dict:
     except Exception as e:
         st.error(f"Fehler beim Laden von Kategorien aus Google Drive: {e}")
         return {}
-
-
-@st.cache_data(show_spinner=False)
-def _cached_load_categories() -> Dict:
-    """Gecachte Variante für Kategorien."""
-    return _load_categories_raw()
 
 
 # --------------------------------------------------------------------
@@ -159,7 +153,7 @@ def _collect_positive_keywords_by_category(
     Liefert pro Kategorie die POS-Keywords:
       {category_name: [kw1, kw2, ...]}
 
-    Priorisiert das Feld "sentence_keywords_positive" aus categories.json.
+    Nutzt bevorzugt "sentence_keywords_positive" aus categories.json.
     """
     result: Dict[str, List[str]] = {}
     for cat in categories_to_label:
@@ -347,11 +341,14 @@ def render():
         cat_name = col.split("Daniel__", 1)[1].lstrip("_")
         cat_to_col[cat_name] = col
 
-    # Kategorien-Konfiguration (gecached) laden und ggf. ergänzen
-    categories_cfg = _cached_load_categories()
+    # Kategorien-Konfiguration IMMER FRISCH von Google Drive laden
+    categories_cfg = _load_categories_raw()
+
     categories: List[str] = []
     for cat in cat_to_col.keys():
         if cat not in categories_cfg:
+            # Wenn es die Kategorie im JSON (noch) nicht gibt:
+            # leeres Dict -> keine Keywords, aber trotzdem Kategorie im UI
             categories_cfg[cat] = {}
         categories.append(cat)
 
