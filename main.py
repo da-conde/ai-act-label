@@ -14,8 +14,8 @@ def main():
     tabs = [
         "AI Act Mapping",
         "Categories",
-        "Labeling Daniel",
-        "Labeling Marie",
+        "Labeling – Daniel",
+        "Labeling – Marie",
     ]
 
     st_tabs = st.tabs(tabs)
@@ -28,11 +28,11 @@ def main():
     with st_tabs[1]:
         categories_tab.render()
 
-    # 3) Labeling Daniel Tab
+    # 3) Labeling – Daniel Tab
     with st_tabs[2]:
         show_labeling_daniel()
 
-    # 4) Labeling Marie Tab
+    # 4) Labeling – Marie Tab
     with st_tabs[3]:
         show_labeling_marie()
 
