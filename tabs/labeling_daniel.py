@@ -187,7 +187,7 @@ def _strip_frontmatter(text: str) -> str:
 def _sanitize_text_for_html(text: str) -> str:
     """
     Entfernt problematische Unicode-Zeichen, aber KEIN html.escape mehr,
-    damit Markdown ganz normal gerendert werden kann.
+    damit Markdown / Sonderzeichen erhalten bleiben.
     """
     cleaned_chars = []
     for ch in text:
@@ -510,7 +510,7 @@ def render():
         st.error(f"README `{filename}` konnte nicht von Google Drive geladen werden: {e}")
         return
 
-    # YAML-Frontmatter entfernen und Text „säubern“, aber Markdown erhalten
+    # YAML-Frontmatter entfernen und Text „säubern“
     text = _strip_frontmatter(raw_text)
     text = _sanitize_text_for_html(text)
 
@@ -550,15 +550,23 @@ def render():
         for kw in kws:
             kw_color_pairs.append({"keyword": kw, "color": color})
 
-    st.markdown("#### README-Inhalt (Markdown + Keyword-Highlighting)")
+    st.markdown("#### README-Inhalt (mit Keyword-Highlighting)")
 
     if kw_color_pairs:
         marked_text = _highlight_keywords_multi(text, kw_color_pairs)
     else:
         marked_text = text
 
-    # Markdown + <mark>-Tags rendern (ohne umschließendes <div>, damit Markdown wirkt)
-    st.markdown(marked_text, unsafe_allow_html=True)
+    # 👉 Scrollbarer Kasten mit dem Readme-Inhalt
+    st.markdown(
+        f"""
+        <div style="max-height:500px;overflow-y:auto;padding:0.75rem;
+        border:1px solid #ddd;border-radius:0.5rem;background-color:#fafafa;">
+        {marked_text}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     # Legende horizontal mit Farben pro Kategorie
     st.markdown("##### Legende für Highlights")
