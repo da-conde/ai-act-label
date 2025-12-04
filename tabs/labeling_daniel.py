@@ -69,11 +69,9 @@ def _reload_categories():
 # Hilfsfunktionen: Korpus-Struktur auf Drive
 # --------------------------------------------------------------------
 
-@st.cache_data(show_spinner=False)
 def _get_labelplan_folder_id() -> str:
     """
     Sucht im Korpus-Ordner einen Unterordner mit Namen 'labelplan'.
-    Dank cache_data nur einmal pro Session.
     """
     folders = list_files_in_folder(
         LABEL_CORPUS_DRIVE_FOLDER_ID,
@@ -88,11 +86,9 @@ def _get_labelplan_folder_id() -> str:
     )
 
 
-@st.cache_data(show_spinner=False)
 def _get_labelplan_file_id() -> str:
     """
     Liefert die fileId von label.csv in labelplan/.
-    Ebenfalls gecached, damit nicht bei jedem Re-Run erneut gesucht wird.
     """
     labelplan_folder_id = _get_labelplan_folder_id()
     files = list_files_in_folder(labelplan_folder_id)
@@ -144,12 +140,54 @@ def _cached_load_readme_text(file_id: str) -> str:
 
 
 # --------------------------------------------------------------------
-# Keyword-Highlighting
+# YAML-Frontmatter entfernen & Sanitizer
 # --------------------------------------------------------------------
+
+def _strip_frontmatter(text: str) -> str:
+    """
+    Entfernt optionales YAML-Frontmatter am Anfang (HuggingFace-Style):
+
+    ---
+    license: ...
+    configs:
+      - ...
+    ---
+    # Überschrift
+
+    Alles zwischen den beiden '---'-Linien am Anfang wird entfernt.
+    """
+    lines = text.splitlines()
+    if not lines:
+        return text
+
+    # erste nicht-leere Zeile suchen
+    first_non_empty_idx = None
+    for i, line in enumerate(lines):
+        if line.strip():
+            first_non_empty_idx = i
+            break
+
+    if first_non_empty_idx is None:
+        return text
+
+    if lines[first_non_empty_idx].strip() != "---":
+        # kein Frontmatter
+        return text
+
+    # zweite '---'-Zeile suchen
+    for j in range(first_non_empty_idx + 1, len(lines)):
+        if lines[j].strip() == "---":
+            # alles danach behalten
+            return "\n".join(lines[j + 1:])
+
+    # falls keine zweite --- gefunden → Text unverändert lassen
+    return text
+
 
 def _sanitize_text_for_html(text: str) -> str:
     """
-    Entfernt problematische Unicode-Zeichen und escaped HTML.
+    Entfernt problematische Unicode-Zeichen, aber KEIN html.escape mehr,
+    damit Markdown ganz normal gerendert werden kann.
     """
     cleaned_chars = []
     for ch in text:
@@ -162,8 +200,12 @@ def _sanitize_text_for_html(text: str) -> str:
             continue
         cleaned_chars.append(ch)
     safe = "".join(cleaned_chars)
-    return html.escape(safe)
+    return safe
 
+
+# --------------------------------------------------------------------
+# Keyword-Highlighting
+# --------------------------------------------------------------------
 
 def _collect_positive_keywords_by_category(
     categories_cfg: Dict,
@@ -463,10 +505,14 @@ def render():
         return
 
     try:
-        text = _cached_load_readme_text(file_id)
+        raw_text = _cached_load_readme_text(file_id)
     except Exception as e:
         st.error(f"README `{filename}` konnte nicht von Google Drive geladen werden: {e}")
         return
+
+    # YAML-Frontmatter entfernen und Text „säubern“, aber Markdown erhalten
+    text = _strip_frontmatter(raw_text)
+    text = _sanitize_text_for_html(text)
 
     st.markdown(
         f"**Aktuelles README:** `{filename}` "
@@ -498,27 +544,21 @@ def render():
     cat_to_keywords = _collect_positive_keywords_by_category(categories_cfg, categories)
 
     # Keyword-Color-Paare bauen (für das eigentliche Highlighting)
-    kw_color_pairs = []
+    kw_color_pairs: List[Dict[str, str]] = []
     for cat, kws in cat_to_keywords.items():
         color = cat_to_color.get(cat, "#ffe58a")
         for kw in kws:
             kw_color_pairs.append({"keyword": kw, "color": color})
 
-    st.markdown("#### README-Inhalt (mit Keyword-Highlighting)")
-    if kw_color_pairs:
-        highlighted_html = _highlight_keywords_multi(text, kw_color_pairs)
-    else:
-        highlighted_html = _sanitize_text_for_html(text)
+    st.markdown("#### README-Inhalt (Markdown + Keyword-Highlighting)")
 
-    st.markdown(
-        f"""
-        <div style="max-height:500px;overflow-y:auto;padding:0.75rem;
-        border:1px solid #ddd;border-radius:0.5rem;background-color:#fafafa;">
-        {highlighted_html}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    if kw_color_pairs:
+        marked_text = _highlight_keywords_multi(text, kw_color_pairs)
+    else:
+        marked_text = text
+
+    # Markdown + <mark>-Tags rendern (ohne umschließendes <div>, damit Markdown wirkt)
+    st.markdown(marked_text, unsafe_allow_html=True)
 
     # Legende horizontal mit Farben pro Kategorie
     st.markdown("##### Legende für Highlights")
