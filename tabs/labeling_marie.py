@@ -1,6 +1,8 @@
 from typing import List, Dict
 import re
 import html
+from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 
@@ -145,16 +147,7 @@ def _cached_load_readme_text(file_id: str) -> str:
 
 def _strip_frontmatter(text: str) -> str:
     """
-    Entfernt optionales YAML-Frontmatter am Anfang (HuggingFace-Style):
-
-    ---
-    license: ...
-    configs:
-      - ...
-    ---
-    # Überschrift
-
-    Alles zwischen den beiden '---'-Linien am Anfang wird entfernt.
+    Entfernt optionales YAML-Frontmatter am Anfang (HuggingFace-Style).
     """
     lines = text.splitlines()
     if not lines:
@@ -214,8 +207,6 @@ def _collect_positive_keywords_by_category(
     """
     Liefert pro Kategorie die POS-Keywords:
       {category_name: [kw1, kw2, ...]}
-
-    Nutzt bevorzugt "sentence_keywords_positive" aus categories.json.
     """
     result: Dict[str, List[str]] = {}
     for cat in categories_to_label:
@@ -357,7 +348,6 @@ def _compute_progress(df_plan: pd.DataFrame, marie_cols: List[str], skipped_ids:
             val = row.get(col, None)
             if pd.isna(val):
                 continue
-            # Leere Strings wie "" ignorieren
             if isinstance(val, str) and val.strip() == "":
                 continue
             any_label = True
@@ -391,27 +381,11 @@ def render():
     if "labelplan_version" not in st.session_state:
         st.session_state["labelplan_version"] = 0
 
-    # Optional: Buttons für manuellen Reload
+    # Optional: Button zum manuellen Reload der Kategorien
     with st.expander("⚙️ Optionen", expanded=False):
-        if st.button("🔄 Kategorien aus Drive neu laden", key="reload_categories_marie_btn"):
+        if st.button("🔄 Kategorien aus Drive neu laden", key="ml_reload_categories_btn"):
             _reload_categories()
             st.info("Kategorien neu geladen.")
-            if hasattr(st, "experimental_rerun"):
-                st.experimental_rerun()
-            else:
-                st.rerun()
-
-        # NEU: README-Index-Cache leeren
-        if st.button("🔄 README-Index neu laden", key="reload_readme_index_marie_btn"):
-            try:
-                _cached_readme_index.clear()
-            except Exception:
-                try:
-                    st.cache_data.clear()
-                except Exception:
-                    pass
-
-            st.success("README-Index-Cache geleert. Seite wird neu geladen …")
             if hasattr(st, "experimental_rerun"):
                 st.experimental_rerun()
             else:
@@ -440,6 +414,10 @@ def render():
     if "df_plan_marie" not in st.session_state:
         st.session_state["df_plan_marie"] = df_plan_remote.copy()
         st.session_state["df_dirty_marie"] = False
+        # Zeitstempel "zuletzt von Drive geladen"
+        st.session_state["marie_labelplan_last_loaded"] = datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
 
     # Ab hier IMMER mit der Session-Kopie arbeiten
     df_plan = st.session_state["df_plan_marie"]
@@ -467,8 +445,6 @@ def render():
     categories: List[str] = []
     for cat in cat_to_col.keys():
         if cat not in categories_cfg:
-            # Wenn es die Kategorie im JSON (noch) nicht gibt:
-            # leeres Dict -> keine Keywords, aber trotzdem Kategorie im UI
             categories_cfg[cat] = {}
         categories.append(cat)
 
@@ -482,7 +458,12 @@ def render():
         return
 
     st.progress(prog["done_docs"] / prog["total_docs"])
-    st.metric("Bearbeitet", f"{prog['done_docs']} / {prog['total_docs']}")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("Bearbeitet", f"{prog['done_docs']} / {prog['total_docs']}")
+    with c2:
+        ts = st.session_state.get("marie_labelplan_last_loaded", "unbekannt")
+        st.caption(f"Zuletzt von Drive geladen: {ts}")
 
     # ------------------------------------------------
     # 4) README-Index (filename -> file_id) aufbauen (gecached)
@@ -541,27 +522,24 @@ def render():
     )
 
     # ------------------------------------------------
-    # 6) Keyword-Highlighting + Legende (aus sentence_keywords_positive)
+    # 6) Keyword-Highlighting + Legende
     # ------------------------------------------------
-    # Farben pro Kategorie (einfaches Set – wird zyklisch genutzt)
     color_palette = [
-        "#ffe58a",  # gelb
-        "#ffcccc",  # rosa
-        "#cce5ff",  # hellblau
-        "#d5f5e3",  # hellgrün
-        "#f9e79f",  # gold
-        "#f5cba7",  # orange
-        "#d7bde2",  # lila
-        "#aed6f1",  # blau
+        "#ffe58a",
+        "#ffcccc",
+        "#cce5ff",
+        "#d5f5e3",
+        "#f9e79f",
+        "#f5cba7",
+        "#d7bde2",
+        "#aed6f1",
     ]
     cat_to_color: Dict[str, str] = {}
     for i, cat in enumerate(categories):
         cat_to_color[cat] = color_palette[i % len(color_palette)]
 
-    # Positive Satz-Keywords pro Kategorie aus categories.json holen
     cat_to_keywords = _collect_positive_keywords_by_category(categories_cfg, categories)
 
-    # Keyword-Color-Paare bauen (für das eigentliche Highlighting)
     kw_color_pairs: List[Dict[str, str]] = []
     for cat, kws in cat_to_keywords.items():
         color = cat_to_color.get(cat, "#ffe58a")
@@ -575,7 +553,6 @@ def render():
     else:
         marked_text = text
 
-    # 👉 Scrollbarer Kasten mit dem Readme-Inhalt
     st.markdown(
         f"""
         <div style="max-height:500px;overflow-y:auto;padding:0.75rem;
@@ -586,7 +563,6 @@ def render():
         unsafe_allow_html=True,
     )
 
-    # Legende horizontal mit Farben pro Kategorie
     st.markdown("##### Legende für Highlights")
     max_per_row = 4
     cats = categories
@@ -647,7 +623,6 @@ def render():
                 else ("Ja (1)" if existing == 1 else "Nein (0)")
             )
 
-            # eigener Key, damit nichts mit Daniel kollidiert
             label_widgets[cat] = st.segmented_control(
                 label=cat,
                 options=["", "Ja (1)", "Nein (0)"],
@@ -671,12 +646,10 @@ def render():
                     val = label_widgets.get(cat, "")
                     plan_col = cat_to_col[cat]
                     if val == "":
-                        # nichts ändern → bisherigen Wert beibehalten
                         continue
                     label_value = 1 if "Ja (1)" in val else 0
                     df_plan.loc[mask_doc, plan_col] = label_value
 
-                # Session-Kopie & Dirty-Flag aktualisieren
                 st.session_state["df_plan_marie"] = df_plan
                 st.session_state["df_dirty_marie"] = True
 
@@ -701,7 +674,7 @@ def render():
                 st.rerun()
 
     # ------------------------------------------------
-    # 9) Synchronisation mit Google Drive (Batch-Upload)
+    # 9) Synchronisation mit Google Drive (Batch-Upload, nur Marie-Spalten mergen)
     # ------------------------------------------------
     st.markdown("---")
     st.markdown("### Synchronisation mit Google Drive")
@@ -719,10 +692,38 @@ def render():
                 st.warning("Keine lokalen Labels zum Hochladen gefunden.")
             else:
                 try:
-                    save_csv_to_drive(df_local, plan_file_id)
-                    st.session_state["df_dirty_marie"] = False
-                    st.session_state["labelplan_version"] += 1
-                    st.success("Labels erfolgreich nach Google Drive hochgeladen.")
+                    # 1) Aktuelle Version von Drive laden
+                    df_remote = load_csv_from_drive(plan_file_id)
+
+                    if "doc_id" not in df_remote.columns:
+                        st.error("In der Labelplan-Datei auf Drive fehlt die Spalte `doc_id`.")
+                    else:
+                        # 2) Nur Marie-Spalten aktualisieren
+                        marie_cols = _get_marie_columns(df_local)
+
+                        df_remote = df_remote.copy()
+                        df_remote.set_index("doc_id", inplace=True)
+                        df_local_idx = df_local.set_index("doc_id")
+
+                        df_remote.update(df_local_idx[marie_cols])
+
+                        df_remote.reset_index(inplace=True)
+
+                        # 3) Gemergte Version zurück nach Drive schreiben
+                        save_csv_to_drive(df_remote, plan_file_id)
+
+                        # 4) Dirty-Flag & Version aktualisieren
+                        st.session_state["df_dirty_marie"] = False
+                        st.session_state["labelplan_version"] += 1
+                        st.session_state["marie_labelplan_last_loaded"] = datetime.now().strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        )
+
+                        st.success(
+                            "Marie-Labels erfolgreich nach Google Drive hochgeladen "
+                            "(nur Marie-Spalten aktualisiert)."
+                        )
+
                 except Exception as e:
                     st.error(f"Fehler beim Hochladen nach Drive: {e}")
 

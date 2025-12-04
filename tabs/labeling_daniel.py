@@ -1,6 +1,8 @@
 from typing import List, Dict
 import re
 import html
+from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 
@@ -391,29 +393,11 @@ def render():
     if "labelplan_version" not in st.session_state:
         st.session_state["labelplan_version"] = 0
 
-    # Optional: Buttons für manuellen Reload
+    # Optional: Button zum manuellen Reload der Kategorien
     with st.expander("⚙️ Optionen", expanded=False):
         if st.button("🔄 Kategorien aus Drive neu laden", key="reload_categories_btn"):
             _reload_categories()
             st.info("Kategorien neu geladen.")
-            if hasattr(st, "experimental_rerun"):
-                st.experimental_rerun()
-            else:
-                st.rerun()
-
-        # NEU: README-Index-Cache leeren
-        if st.button("🔄 README-Index neu laden", key="reload_readme_index_btn"):
-            try:
-                # nur den Cache dieser Funktion leeren
-                _cached_readme_index.clear()
-            except Exception:
-                # Fallback: gesamten cache_data leeren, falls nötig
-                try:
-                    st.cache_data.clear()
-                except Exception:
-                    pass
-
-            st.success("README-Index-Cache geleert. Seite wird neu geladen …")
             if hasattr(st, "experimental_rerun"):
                 st.experimental_rerun()
             else:
@@ -442,6 +426,10 @@ def render():
     if "df_plan_daniel" not in st.session_state:
         st.session_state["df_plan_daniel"] = df_plan_remote.copy()
         st.session_state["df_dirty_daniel"] = False
+        # Zeitstempel "zuletzt von Drive geladen"
+        st.session_state["daniel_labelplan_last_loaded"] = datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
 
     # Ab hier IMMER mit der Session-Kopie arbeiten
     df_plan = st.session_state["df_plan_daniel"]
@@ -484,7 +472,12 @@ def render():
         return
 
     st.progress(prog["done_docs"] / prog["total_docs"])
-    st.metric("Bearbeitet", f"{prog['done_docs']} / {prog['total_docs']}")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("Bearbeitet", f"{prog['done_docs']} / {prog['total_docs']}")
+    with c2:
+        ts = st.session_state.get("daniel_labelplan_last_loaded", "unbekannt")
+        st.caption(f"Zuletzt von Drive geladen: {ts}")
 
     # ------------------------------------------------
     # 4) README-Index (filename -> file_id) aufbauen (gecached)
@@ -702,7 +695,7 @@ def render():
                 st.rerun()
 
     # ------------------------------------------------
-    # 9) Synchronisation mit Google Drive (Batch-Upload)
+    # 9) Synchronisation mit Google Drive (Batch-Upload, nur Daniel-Spalten mergen)
     # ------------------------------------------------
     st.markdown("---")
     st.markdown("### Synchronisation mit Google Drive")
@@ -720,10 +713,39 @@ def render():
                 st.warning("Keine lokalen Labels zum Hochladen gefunden.")
             else:
                 try:
-                    save_csv_to_drive(df_local, plan_file_id)
-                    st.session_state["df_dirty_daniel"] = False
-                    st.session_state["labelplan_version"] += 1
-                    st.success("Labels erfolgreich nach Google Drive hochgeladen.")
+                    # 1) Aktuelle Version von Drive laden
+                    df_remote = load_csv_from_drive(plan_file_id)
+
+                    if "doc_id" not in df_remote.columns:
+                        st.error("In der Labelplan-Datei auf Drive fehlt die Spalte `doc_id`.")
+                    else:
+                        # 2) Nur Daniel-Spalten aktualisieren
+                        daniel_cols = _get_daniel_columns(df_local)
+
+                        df_remote = df_remote.copy()
+                        df_remote.set_index("doc_id", inplace=True)
+                        df_local_idx = df_local.set_index("doc_id")
+
+                        # Nur die Daniel-Spalten aus der lokalen Kopie übernehmen
+                        df_remote.update(df_local_idx[daniel_cols])
+
+                        df_remote.reset_index(inplace=True)
+
+                        # 3) Gemergte Version zurück nach Drive schreiben
+                        save_csv_to_drive(df_remote, plan_file_id)
+
+                        # 4) Dirty-Flag & Version aktualisieren
+                        st.session_state["df_dirty_daniel"] = False
+                        st.session_state["labelplan_version"] += 1
+                        st.session_state["daniel_labelplan_last_loaded"] = datetime.now().strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        )
+
+                        st.success(
+                            "Daniel-Labels erfolgreich nach Google Drive hochgeladen "
+                            "(nur Daniel-Spalten aktualisiert)."
+                        )
+
                 except Exception as e:
                     st.error(f"Fehler beim Hochladen nach Drive: {e}")
 
