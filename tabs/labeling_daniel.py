@@ -32,11 +32,11 @@ CORPUS_NAME = "label-corpus-v1"  # nur für Anzeige
 
 
 # --------------------------------------------------------------------
-# Hilfsfunktionen: Kategorien (OHNE Cache, immer aktuelle JSON)
+# Hilfsfunktionen: Kategorien (Drive + Session-Cache)
 # --------------------------------------------------------------------
 
 def _load_categories_raw() -> Dict:
-    """categories.json von Google Drive laden (immer aktuell, kein Cache)."""
+    """categories.json von Google Drive laden (einmalig, dann in Session-Cache)."""
     try:
         data = load_json_from_drive(CATEGORIES_DRIVE_FILE_ID)
         if isinstance(data, dict):
@@ -47,6 +47,22 @@ def _load_categories_raw() -> Dict:
     except Exception as e:
         st.error(f"Fehler beim Laden von Kategorien aus Google Drive: {e}")
         return {}
+
+
+def _get_categories_cached() -> Dict:
+    """
+    Kategorien einmal pro Session von Drive laden und dann aus st.session_state holen.
+    So vermeiden wir Drive-Requests bei jedem Klick.
+    """
+    key = "daniel_categories_cache"
+    if key not in st.session_state:
+        st.session_state[key] = _load_categories_raw()
+    return st.session_state[key]
+
+
+def _reload_categories():
+    """Manuelles Neuladen aus Drive (falls du im Categories-Tab etwas geändert hast)."""
+    st.session_state["daniel_categories_cache"] = _load_categories_raw()
 
 
 # --------------------------------------------------------------------
@@ -210,10 +226,11 @@ def _highlight_keywords_multi(text: str, kw_color_pairs: List[Dict[str, str]]) -
 
 
 # --------------------------------------------------------------------
-# Skipped-Tracking (kleine Extra-CSV, aber KEIN Label-File)
+# Skipped-Tracking (Drive + Session-Cache)
 # --------------------------------------------------------------------
 
-def _load_skipped_ids() -> List[str]:
+def _load_skipped_ids_raw() -> List[str]:
+    """Direkt von Drive laden (wird dann in Session-Cache gelegt)."""
     df = load_csv_from_drive_by_name(LABEL_CORPUS_DRIVE_FOLDER_ID, SKIPPED_FILENAME)
     if df is None or df.empty:
         return []
@@ -222,7 +239,19 @@ def _load_skipped_ids() -> List[str]:
     return df["doc_id"].astype(str).tolist()
 
 
+def _get_skipped_ids_cached() -> List[str]:
+    """
+    Skipped-IDs einmal pro Session von Drive holen und dann in
+    st.session_state vorhalten.
+    """
+    key = "daniel_skipped_cache"
+    if key not in st.session_state:
+        st.session_state[key] = _load_skipped_ids_raw()
+    return st.session_state[key]
+
+
 def _append_skipped_id(doc_id: str, filename: str):
+    # 1) Auf Drive schreiben
     df = load_csv_from_drive_by_name(LABEL_CORPUS_DRIVE_FOLDER_ID, SKIPPED_FILENAME)
     if df is None or df.empty:
         df = pd.DataFrame(columns=["doc_id", "filename"])
@@ -237,6 +266,13 @@ def _append_skipped_id(doc_id: str, filename: str):
             ignore_index=True,
         )
         save_csv_to_drive_by_name(df, LABEL_CORPUS_DRIVE_FOLDER_ID, SKIPPED_FILENAME)
+
+    # 2) Session-Cache aktualisieren
+    key = "daniel_skipped_cache"
+    skipped = st.session_state.get(key, [])
+    if doc_id not in skipped:
+        skipped.append(doc_id)
+    st.session_state[key] = skipped
 
 
 # --------------------------------------------------------------------
@@ -309,6 +345,13 @@ def render():
     if "labelplan_version" not in st.session_state:
         st.session_state["labelplan_version"] = 0
 
+    # Optional: Button zum manuellen Reload der Kategorien
+    with st.expander("⚙️ Optionen", expanded=False):
+        if st.button("🔄 Kategorien aus Drive neu laden", key="reload_categories_btn"):
+            _reload_categories()
+            st.info("Kategorien neu geladen.")
+            st.experimental_rerun() if hasattr(st, "experimental_rerun") else st.rerun()
+
     # ------------------------------------------------
     # 1) label.csv aus Google Drive holen (gecached)
     # ------------------------------------------------
@@ -341,8 +384,8 @@ def render():
         cat_name = col.split("Daniel__", 1)[1].lstrip("_")
         cat_to_col[cat_name] = col
 
-    # Kategorien-Konfiguration IMMER FRISCH von Google Drive laden
-    categories_cfg = _load_categories_raw()
+    # Kategorien-Konfiguration aus Session-Cache holen (einmal pro Session von Drive)
+    categories_cfg = _get_categories_cached()
 
     categories: List[str] = []
     for cat in cat_to_col.keys():
@@ -353,9 +396,9 @@ def render():
         categories.append(cat)
 
     # ------------------------------------------------
-    # 3) Skips laden & Fortschritt berechnen
+    # 3) Skips laden & Fortschritt berechnen (Skips aus Session-Cache)
     # ------------------------------------------------
-    skipped = _load_skipped_ids()
+    skipped = _get_skipped_ids_cached()
     prog = _compute_progress(df_plan, daniel_cols, skipped)
     if prog["total_docs"] == 0:
         st.error("Der ausgewählte Labeling-Plan enthält keine Einträge.")
