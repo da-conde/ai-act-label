@@ -391,11 +391,29 @@ def render():
     if "labelplan_version" not in st.session_state:
         st.session_state["labelplan_version"] = 0
 
-    # Optional: Button zum manuellen Reload der Kategorien
+    # Optional: Buttons für manuellen Reload
     with st.expander("⚙️ Optionen", expanded=False):
         if st.button("🔄 Kategorien aus Drive neu laden", key="reload_categories_btn"):
             _reload_categories()
             st.info("Kategorien neu geladen.")
+            if hasattr(st, "experimental_rerun"):
+                st.experimental_rerun()
+            else:
+                st.rerun()
+
+        # NEU: README-Index-Cache leeren
+        if st.button("🔄 README-Index neu laden", key="reload_readme_index_btn"):
+            try:
+                # nur den Cache dieser Funktion leeren
+                _cached_readme_index.clear()
+            except Exception:
+                # Fallback: gesamten cache_data leeren, falls nötig
+                try:
+                    st.cache_data.clear()
+                except Exception:
+                    pass
+
+            st.success("README-Index-Cache geleert. Seite wird neu geladen …")
             if hasattr(st, "experimental_rerun"):
                 st.experimental_rerun()
             else:
@@ -411,7 +429,9 @@ def render():
         return
 
     try:
-        df_plan_remote = _cached_load_labelplan(plan_file_id, st.session_state["labelplan_version"])
+        df_plan_remote = _cached_load_labelplan(
+            plan_file_id, st.session_state["labelplan_version"]
+        )
     except Exception as e:
         st.error(f"Labeling-Plan konnte nicht geladen werden: {e}")
         return
