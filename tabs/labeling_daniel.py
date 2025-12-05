@@ -111,10 +111,14 @@ def _get_labelplan_file_id() -> str:
 
 
 @st.cache_data(show_spinner=False)
-def _cached_readme_index(folder_id: str) -> Dict[str, str]:
+def _cached_readme_index(folder_id: str, version: int) -> Dict[str, str]:
     """
     Gecachtes Mapping filename -> file_id für alle Dateien im
     Korpus-Ordner (ohne Unterordner).
+
+    Der Parameter `version` sorgt dafür, dass wir den Cache manuell
+    invalidieren können (z. B. nach dem Kopieren eines neuen Korpus
+    nach Google Drive).
     """
     files = list_files_in_folder(folder_id)
     index: Dict[str, str] = {}
@@ -411,19 +415,31 @@ def _find_next_doc_index(df_plan: pd.DataFrame, done_mask: List[bool]) -> int:
 def render():
     st.subheader("🧩 Labeling – Daniel")
 
-    # Session-State-Init (damit labelplan_version immer existiert)
+    # Session-State-Init (damit labelplan_version & readme_index_version immer existieren)
     if "labelplan_version" not in st.session_state:
         st.session_state["labelplan_version"] = 0
+    if "readme_index_version" not in st.session_state:
+        st.session_state["readme_index_version"] = 0
 
-    # Optional: Button zum manuellen Reload der Kategorien
+    # Optional: Button zum manuellen Reload der Kategorien & der Dateiliste
     with st.expander("⚙️ Optionen", expanded=False):
-        if st.button("🔄 Kategorien aus Drive neu laden", key="reload_categories_btn"):
-            _reload_categories()
-            st.info("Kategorien neu geladen.")
-            if hasattr(st, "experimental_rerun"):
-                st.experimental_rerun()
-            else:
-                st.rerun()
+        col_opt1, col_opt2 = st.columns(2)
+        with col_opt1:
+            if st.button("🔄 Kategorien aus Drive neu laden", key="reload_categories_btn"):
+                _reload_categories()
+                st.info("Kategorien neu geladen.")
+                if hasattr(st, "experimental_rerun"):
+                    st.experimental_rerun()
+                else:
+                    st.rerun()
+        with col_opt2:
+            if st.button("🔄 Korpus-Dateiliste neu laden", key="reload_readme_index_btn"):
+                st.session_state["readme_index_version"] += 1
+                st.info("Korpus-Dateiliste neu geladen.")
+                if hasattr(st, "experimental_rerun"):
+                    st.experimental_rerun()
+                else:
+                    st.rerun()
 
     # ------------------------------------------------
     # 1) label.csv aus Google Drive holen (gecached)
@@ -504,7 +520,10 @@ def render():
     # ------------------------------------------------
     # 4) README-Index (filename -> file_id) aufbauen (gecached)
     # ------------------------------------------------
-    readme_index = _cached_readme_index(LABEL_CORPUS_DRIVE_FOLDER_ID)
+    readme_index = _cached_readme_index(
+        LABEL_CORPUS_DRIVE_FOLDER_ID,
+        st.session_state["readme_index_version"],
+    )
     if not readme_index:
         st.error(
             "Im Korpus-Ordner auf Google Drive wurden keine README-Dateien gefunden. "
@@ -535,7 +554,9 @@ def render():
         st.error(
             f"Die Datei `{filename}` wurde im Korpus-Ordner auf Google Drive nicht gefunden.\n\n"
             "Bitte sicherstellen, dass der Dateiname im Labeling-Plan (Spalte `filename`) "
-            "exakt mit der Datei im Ordner `label-corpus-v1` übereinstimmt."
+            "exakt mit der Datei im Ordner `label-corpus-v1` übereinstimmt.\n\n"
+            "Falls du den Final-Korpus gerade neu nach Google Drive kopiert hast, "
+            "nutze im ⚙️-Menü den Button **„Korpus-Dateiliste neu laden“**."
         )
         return
 
