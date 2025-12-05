@@ -26,7 +26,7 @@ LABEL_CORPUS_DRIVE_FOLDER_ID = "1oOrVSlzR3sP7EYvIr5nzEgBF4KtJ2roJ"
 # categories.json auf Google Drive (selbe ID wie im Categories-Tab)
 CATEGORIES_DRIVE_FILE_ID = "1EmZHSfSwbEw4JYsyRYvVBSbY4g4FSOi5"
 
-# Datei für Skips im gleichen Ordner wie der Korpus (kein Label-File!)
+# Datei für Skips im labelplan-Unterordner
 SKIPPED_FILENAME = "skipped_marie.csv"
 
 ANNOTATOR_NAME = "marie"  # fix für diesen Tab
@@ -111,10 +111,14 @@ def _get_labelplan_file_id() -> str:
 
 
 @st.cache_data(show_spinner=False)
-def _cached_readme_index(folder_id: str) -> Dict[str, str]:
+def _cached_readme_index(folder_id: str, version: int) -> Dict[str, str]:
     """
     Gecachtes Mapping filename -> file_id für alle Dateien im
     Korpus-Ordner (ohne Unterordner).
+
+    Der Parameter `version` sorgt dafür, dass wir den Cache manuell
+    invalidieren können (z. B. nach dem Kopieren eines neuen Korpus
+    nach Google Drive).
     """
     files = list_files_in_folder(folder_id)
     index: Dict[str, str] = {}
@@ -147,7 +151,16 @@ def _cached_load_readme_text(file_id: str) -> str:
 
 def _strip_frontmatter(text: str) -> str:
     """
-    Entfernt optionales YAML-Frontmatter am Anfang (HuggingFace-Style).
+    Entfernt optionales YAML-Frontmatter am Anfang (HuggingFace-Style):
+
+    ---
+    license: ...
+    configs:
+      - ...
+    ---
+    # Überschrift
+
+    Alles zwischen den beiden '---'-Linien am Anfang wird entfernt.
     """
     lines = text.splitlines()
     if not lines:
@@ -207,6 +220,8 @@ def _collect_positive_keywords_by_category(
     """
     Liefert pro Kategorie die POS-Keywords:
       {category_name: [kw1, kw2, ...]}
+
+    Nutzt bevorzugt "sentence_keywords_positive" aus categories.json.
     """
     result: Dict[str, List[str]] = {}
     for cat in categories_to_label:
@@ -267,8 +282,18 @@ def _highlight_keywords_multi(text: str, kw_color_pairs: List[Dict[str, str]]) -
 # --------------------------------------------------------------------
 
 def _load_skipped_ids_raw() -> List[str]:
-    """Direkt von Drive laden (wird dann in Session-Cache gelegt)."""
-    df = load_csv_from_drive_by_name(LABEL_CORPUS_DRIVE_FOLDER_ID, SKIPPED_FILENAME)
+    """
+    Direkt von Drive laden (wird dann in Session-Cache gelegt).
+    Sucht die Datei `skipped_marie.csv` im labelplan-Unterordner.
+    """
+    try:
+        labelplan_folder_id = _get_labelplan_folder_id()
+    except Exception as e:
+        # Wenn es den labelplan-Ordner nicht gibt, einfach keine Skips
+        st.warning(f"Skip-Dateien konnten nicht geladen werden: {e}")
+        return []
+
+    df = load_csv_from_drive_by_name(labelplan_folder_id, SKIPPED_FILENAME)
     if df is None or df.empty:
         return []
     if "doc_id" not in df.columns:
@@ -288,8 +313,19 @@ def _get_skipped_ids_cached() -> List[str]:
 
 
 def _append_skipped_id(doc_id: str, filename: str):
+    """
+    doc_id + filename in skipped_marie.csv im labelplan-Ordner ergänzen
+    und Session-Cache aktualisieren.
+    """
+    # Zielordner jetzt: labelplan-Unterordner
+    try:
+        labelplan_folder_id = _get_labelplan_folder_id()
+    except Exception as e:
+        st.error(f"Skip-Datei konnte nicht aktualisiert werden (labelplan-Ordner fehlt?): {e}")
+        return
+
     # 1) Auf Drive schreiben
-    df = load_csv_from_drive_by_name(LABEL_CORPUS_DRIVE_FOLDER_ID, SKIPPED_FILENAME)
+    df = load_csv_from_drive_by_name(labelplan_folder_id, SKIPPED_FILENAME)
     if df is None or df.empty:
         df = pd.DataFrame(columns=["doc_id", "filename"])
     if "doc_id" not in df.columns:
@@ -302,7 +338,8 @@ def _append_skipped_id(doc_id: str, filename: str):
             [df, pd.DataFrame([{"doc_id": doc_id, "filename": filename}])],
             ignore_index=True,
         )
-        save_csv_to_drive_by_name(df, LABEL_CORPUS_DRIVE_FOLDER_ID, SKIPPED_FILENAME)
+        # ⬇️ Speichern jetzt im labelplan-Ordner
+        save_csv_to_drive_by_name(df, labelplan_folder_id, SKIPPED_FILENAME)
 
     # 2) Session-Cache aktualisieren
     key = "marie_skipped_cache"
@@ -348,6 +385,7 @@ def _compute_progress(df_plan: pd.DataFrame, marie_cols: List[str], skipped_ids:
             val = row.get(col, None)
             if pd.isna(val):
                 continue
+            # Leere Strings wie "" ignorieren
             if isinstance(val, str) and val.strip() == "":
                 continue
             any_label = True
@@ -377,19 +415,32 @@ def _find_next_doc_index(df_plan: pd.DataFrame, done_mask: List[bool]) -> int:
 def render():
     st.subheader("🧩 Labeling – Marie")
 
-    # Session-State-Init (damit labelplan_version immer existiert)
+    # Session-State-Init (labelplan_version & readme_index_version sind global,
+    # damit Daniel & Marie denselben Stand nutzen)
     if "labelplan_version" not in st.session_state:
         st.session_state["labelplan_version"] = 0
+    if "readme_index_version" not in st.session_state:
+        st.session_state["readme_index_version"] = 0
 
-    # Optional: Button zum manuellen Reload der Kategorien
+    # Optional: Button zum manuellen Reload der Kategorien & der Dateiliste
     with st.expander("⚙️ Optionen", expanded=False):
-        if st.button("🔄 Kategorien aus Drive neu laden", key="ml_reload_categories_btn"):
-            _reload_categories()
-            st.info("Kategorien neu geladen.")
-            if hasattr(st, "experimental_rerun"):
-                st.experimental_rerun()
-            else:
-                st.rerun()
+        col_opt1, col_opt2 = st.columns(2)
+        with col_opt1:
+            if st.button("🔄 Kategorien aus Drive neu laden", key="reload_categories_btn_marie"):
+                _reload_categories()
+                st.info("Kategorien neu geladen.")
+                if hasattr(st, "experimental_rerun"):
+                    st.experimental_rerun()
+                else:
+                    st.rerun()
+        with col_opt2:
+            if st.button("🔄 Korpus-Dateiliste neu laden", key="reload_readme_index_btn_marie"):
+                st.session_state["readme_index_version"] += 1
+                st.info("Korpus-Dateiliste neu geladen.")
+                if hasattr(st, "experimental_rerun"):
+                    st.experimental_rerun()
+                else:
+                    st.rerun()
 
     # ------------------------------------------------
     # 1) label.csv aus Google Drive holen (gecached)
@@ -445,6 +496,8 @@ def render():
     categories: List[str] = []
     for cat in cat_to_col.keys():
         if cat not in categories_cfg:
+            # Wenn es die Kategorie im JSON (noch) nicht gibt:
+            # leeres Dict -> keine Keywords, aber trotzdem Kategorie im UI
             categories_cfg[cat] = {}
         categories.append(cat)
 
@@ -468,7 +521,10 @@ def render():
     # ------------------------------------------------
     # 4) README-Index (filename -> file_id) aufbauen (gecached)
     # ------------------------------------------------
-    readme_index = _cached_readme_index(LABEL_CORPUS_DRIVE_FOLDER_ID)
+    readme_index = _cached_readme_index(
+        LABEL_CORPUS_DRIVE_FOLDER_ID,
+        st.session_state["readme_index_version"],
+    )
     if not readme_index:
         st.error(
             "Im Korpus-Ordner auf Google Drive wurden keine README-Dateien gefunden. "
@@ -499,7 +555,9 @@ def render():
         st.error(
             f"Die Datei `{filename}` wurde im Korpus-Ordner auf Google Drive nicht gefunden.\n\n"
             "Bitte sicherstellen, dass der Dateiname im Labeling-Plan (Spalte `filename`) "
-            "exakt mit der Datei im Ordner `label-corpus-v1` übereinstimmt."
+            "exakt mit der Datei im Ordner `label-corpus-v1` übereinstimmt.\n\n"
+            "Falls du den Final-Korpus gerade neu nach Google Drive kopiert hast, "
+            "nutze im ⚙️-Menü den Button **„Korpus-Dateiliste neu laden“**."
         )
         return
 
@@ -522,24 +580,27 @@ def render():
     )
 
     # ------------------------------------------------
-    # 6) Keyword-Highlighting + Legende
+    # 6) Keyword-Highlighting + Legende (aus sentence_keywords_positive)
     # ------------------------------------------------
+    # Farben pro Kategorie (einfaches Set – wird zyklisch genutzt)
     color_palette = [
-        "#ffe58a",
-        "#ffcccc",
-        "#cce5ff",
-        "#d5f5e3",
-        "#f9e79f",
-        "#f5cba7",
-        "#d7bde2",
-        "#aed6f1",
+        "#ffe58a",  # gelb
+        "#ffcccc",  # rosa
+        "#cce5ff",  # hellblau
+        "#d5f5e3",  # hellgrün
+        "#f9e79f",  # gold
+        "#f5cba7",  # orange
+        "#d7bde2",  # lila
+        "#aed6f1",  # blau
     ]
     cat_to_color: Dict[str, str] = {}
     for i, cat in enumerate(categories):
         cat_to_color[cat] = color_palette[i % len(color_palette)]
 
+    # Positive Satz-Keywords pro Kategorie aus categories.json holen
     cat_to_keywords = _collect_positive_keywords_by_category(categories_cfg, categories)
 
+    # Keyword-Color-Paare bauen (für das eigentliche Highlighting)
     kw_color_pairs: List[Dict[str, str]] = []
     for cat, kws in cat_to_keywords.items():
         color = cat_to_color.get(cat, "#ffe58a")
@@ -553,6 +614,7 @@ def render():
     else:
         marked_text = text
 
+    # 👉 Scrollbarer Kasten mit dem Readme-Inhalt
     st.markdown(
         f"""
         <div style="max-height:500px;overflow-y:auto;padding:0.75rem;
@@ -563,6 +625,7 @@ def render():
         unsafe_allow_html=True,
     )
 
+    # Legende horizontal mit Farben pro Kategorie
     st.markdown("##### Legende für Highlights")
     max_per_row = 4
     cats = categories
@@ -627,7 +690,7 @@ def render():
                 label=cat,
                 options=["", "Ja (1)", "Nein (0)"],
                 default=default_val,
-                key=f"marie_{doc_id}_{cat}",
+                key=f"{doc_id}_{cat}_marie",
             )
 
     # ------------------------------------------------
@@ -646,10 +709,12 @@ def render():
                     val = label_widgets.get(cat, "")
                     plan_col = cat_to_col[cat]
                     if val == "":
+                        # nichts ändern → bisherigen Wert beibehalten
                         continue
                     label_value = 1 if "Ja (1)" in val else 0
                     df_plan.loc[mask_doc, plan_col] = label_value
 
+                # Session-Kopie & Dirty-Flag aktualisieren
                 st.session_state["df_plan_marie"] = df_plan
                 st.session_state["df_dirty_marie"] = True
 
@@ -699,13 +764,14 @@ def render():
                         st.error("In der Labelplan-Datei auf Drive fehlt die Spalte `doc_id`.")
                     else:
                         # 2) Nur Marie-Spalten aktualisieren
-                        marie_cols = _get_marie_columns(df_local)
+                        marie_cols_remote = _get_marie_columns(df_local)
 
                         df_remote = df_remote.copy()
                         df_remote.set_index("doc_id", inplace=True)
                         df_local_idx = df_local.set_index("doc_id")
 
-                        df_remote.update(df_local_idx[marie_cols])
+                        # Nur die Marie-Spalten aus der lokalen Kopie übernehmen
+                        df_remote.update(df_local_idx[marie_cols_remote])
 
                         df_remote.reset_index(inplace=True)
 
