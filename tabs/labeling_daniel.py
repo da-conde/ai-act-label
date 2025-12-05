@@ -26,7 +26,7 @@ LABEL_CORPUS_DRIVE_FOLDER_ID = "1oOrVSlzR3sP7EYvIr5nzEgBF4KtJ2roJ"
 # categories.json auf Google Drive (selbe ID wie im Categories-Tab)
 CATEGORIES_DRIVE_FILE_ID = "1EmZHSfSwbEw4JYsyRYvVBSbY4g4FSOi5"
 
-# Datei für Skips im gleichen Ordner wie der Korpus (kein Label-File!)
+# Datei für Skips im labelplan-Unterordner
 SKIPPED_FILENAME = "skipped_daniel.csv"
 
 ANNOTATOR_NAME = "daniel"  # fix für diesen Tab
@@ -278,8 +278,18 @@ def _highlight_keywords_multi(text: str, kw_color_pairs: List[Dict[str, str]]) -
 # --------------------------------------------------------------------
 
 def _load_skipped_ids_raw() -> List[str]:
-    """Direkt von Drive laden (wird dann in Session-Cache gelegt)."""
-    df = load_csv_from_drive_by_name(LABEL_CORPUS_DRIVE_FOLDER_ID, SKIPPED_FILENAME)
+    """
+    Direkt von Drive laden (wird dann in Session-Cache gelegt).
+    Sucht die Datei `skipped_daniel.csv` im labelplan-Unterordner.
+    """
+    try:
+        labelplan_folder_id = _get_labelplan_folder_id()
+    except Exception as e:
+        # Wenn es den labelplan-Ordner nicht gibt, einfach keine Skips
+        st.warning(f"Skip-Dateien konnten nicht geladen werden: {e}")
+        return []
+
+    df = load_csv_from_drive_by_name(labelplan_folder_id, SKIPPED_FILENAME)
     if df is None or df.empty:
         return []
     if "doc_id" not in df.columns:
@@ -299,8 +309,19 @@ def _get_skipped_ids_cached() -> List[str]:
 
 
 def _append_skipped_id(doc_id: str, filename: str):
+    """
+    doc_id + filename in skipped_daniel.csv im labelplan-Ordner ergänzen
+    und Session-Cache aktualisieren.
+    """
+    # Zielordner jetzt: labelplan-Unterordner
+    try:
+        labelplan_folder_id = _get_labelplan_folder_id()
+    except Exception as e:
+        st.error(f"Skip-Datei konnte nicht aktualisiert werden (labelplan-Ordner fehlt?): {e}")
+        return
+
     # 1) Auf Drive schreiben
-    df = load_csv_from_drive_by_name(LABEL_CORPUS_DRIVE_FOLDER_ID, SKIPPED_FILENAME)
+    df = load_csv_from_drive_by_name(labelplan_folder_id, SKIPPED_FILENAME)
     if df is None or df.empty:
         df = pd.DataFrame(columns=["doc_id", "filename"])
     if "doc_id" not in df.columns:
@@ -313,7 +334,8 @@ def _append_skipped_id(doc_id: str, filename: str):
             [df, pd.DataFrame([{"doc_id": doc_id, "filename": filename}])],
             ignore_index=True,
         )
-        save_csv_to_drive_by_name(df, LABEL_CORPUS_DRIVE_FOLDER_ID, SKIPPED_FILENAME)
+        # ⬇️ Speichern jetzt im labelplan-Ordner
+        save_csv_to_drive_by_name(df, labelplan_folder_id, SKIPPED_FILENAME)
 
     # 2) Session-Cache aktualisieren
     key = "daniel_skipped_cache"
