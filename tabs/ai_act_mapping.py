@@ -2,137 +2,58 @@ import streamlit as st
 import graphviz
 import pandas as pd
 
-from utils.gdrive import load_csv_from_drive, save_csv_to_drive
-
 
 # ----------------------------------------------------
-# Google Drive Konfiguration
+# Hardcodiertes Mapping (4 Kategorien + Erklärung)
 # ----------------------------------------------------
 
-# File-ID deiner ai_act_mapping.csv auf Google Drive
-AI_ACT_MAPPING_DRIVE_FILE_ID = "1pjoV4AnJxxIy3nK4fG1htB3mcvqWk0Qp"
-
-
-# ----------------------------------------------------
-# Hilfsfunktionen: Default-Schema
-# ----------------------------------------------------
-
-def default_mapping_df() -> pd.DataFrame:
+def get_mapping_df() -> pd.DataFrame:
     """
-    Liefert das neue, feste Default-Schema mit GENAU den vier Kernkategorien:
-      - Data Source / Provenance
-      - Synthetic Data Disclosure
-      - Fairness / Bias Disclosure
-      - Limitations & Suitability
+    Liefert das feste Schema mit GENAU den vier Kernkategorien:
+      1) Data Provenance (Origin)
+      2) Data Composition (Real vs. Synthetic)
+      3) Data Preparation & Processing
+      4) Bias & Fairness Disclosure
+
+    'detail' enthält jeweils den erklärenden Untertitel.
     """
     rows = [
-        # 1) Data Source / Provenance
         {
             "pillar": "Art. 10 – Data Governance & Data Quality",
-            "category": "Data Source / Provenance",
-            "detail": "Herkunft / Erzeugung der Trainingsdaten (z. B. Logs, Sensoren, Web-Scraping).",
+            "category": "Data Provenance (Origin)",
+            "detail": (
+                "Beschreibt die Herkunft der Daten: Wie, wo und durch wen sie erhoben wurden, "
+                "welche Quellen genutzt wurden und unter welchen Bedingungen die Datenerfassung stattfand."
+            ),
         },
         {
             "pillar": "Art. 10 – Data Governance & Data Quality",
-            "category": "Data Source / Provenance",
-            "detail": "Dokumentation der Datenerhebungsprozesse und Vorverarbeitungsschritte.",
-        },
-
-        # 2) Synthetic Data Disclosure
-        {
-            "pillar": "Art. 10 – Data Governance & Data Quality",
-            "category": "Synthetic Data Disclosure",
-            "detail": "Offenlegung, ob und wo synthetische Daten im Trainingsdatensatz verwendet werden.",
+            "category": "Data Composition (Real vs. Synthetic)",
+            "detail": (
+                "Gibt an, ob der Datensatz aus realweltlichen Beobachtungen, synthetisch generierten Daten "
+                "oder einer Kombination beider besteht – einschließlich Hinweise auf generative Verfahren "
+                "oder künstliche Ergänzungen."
+            ),
         },
         {
             "pillar": "Art. 10 – Data Governance & Data Quality",
-            "category": "Synthetic Data Disclosure",
-            "detail": "Begründung, warum synthetische Daten eingesetzt werden (z. B. Privacy, Class-Balancing).",
-        },
-
-        # 3) Fairness / Bias Disclosure
-        {
-            "pillar": "Art. 10 – Data Governance & Data Quality",
-            "category": "Fairness / Bias Disclosure",
-            "detail": "Hinweise auf bekannte Verzerrungen oder eingeschränkte Repräsentativität des Datensatzes.",
+            "category": "Data Preparation & Processing",
+            "detail": (
+                "Dokumentiert alle Schritte der Datenaufbereitung, z. B. Cleaning, Filtering, Normalisierung, "
+                "Labeling, Splits oder andere Transformationen, die die Datenform oder -qualität beeinflussen."
+            ),
         },
         {
             "pillar": "Art. 10 – Data Governance & Data Quality",
-            "category": "Fairness / Bias Disclosure",
-            "detail": "Beschreibung von Bias-Analysen oder Fairness-Evaluierungen.",
-        },
-
-        # 4) Limitations & Suitability
-        {
-            "pillar": "Art. 10 – Data Governance & Data Quality",
-            "category": "Limitations & Suitability",
-            "detail": "Angaben zu intended / non-intended use und Grenzen der Datennutzung.",
-        },
-        {
-            "pillar": "Art. 10 – Data Governance & Data Quality",
-            "category": "Limitations & Suitability",
-            "detail": "Warnhinweise zu möglichen Fehlinterpretationen oder Missbrauch des Datensatzes.",
+            "category": "Bias & Fairness Disclosure",
+            "detail": (
+                "Beschreibt potenzielle Verzerrungen, Repräsentationsprobleme oder fairness-relevante Risiken "
+                "im Datensatz sowie Maßnahmen, die zur Identifikation, Bewertung oder Mitigation von Bias "
+                "ergriffen wurden."
+            ),
         },
     ]
     return pd.DataFrame(rows, columns=["pillar", "category", "detail"])
-
-
-# ----------------------------------------------------
-# Hilfsfunktionen: Laden / Speichern über Google Drive
-# ----------------------------------------------------
-
-def load_mapping_df() -> pd.DataFrame:
-    """
-    Lädt die Mapping-Tabelle von Google Drive.
-    Falls die Datei fehlt, leer ist oder nicht das erwartete Schema enthält,
-    wird das Default-Schema erzeugt und wieder nach Drive geschrieben.
-    """
-    wanted_cats = {
-        "Data Source / Provenance",
-        "Synthetic Data Disclosure",
-        "Fairness / Bias Disclosure",
-        "Limitations & Suitability",
-    }
-
-    # 1) Versuchen, CSV von Google Drive zu laden
-    try:
-        df = load_csv_from_drive(AI_ACT_MAPPING_DRIVE_FILE_ID)
-    except Exception as e:
-        st.error(f"Fehler beim Laden der AI Act Mapping CSV von Google Drive: {e}")
-        df = pd.DataFrame()
-
-    # 2) Prüfen, ob die Datei brauchbar ist
-    if (
-        df.empty
-        or "category" not in df.columns
-        or not set(df["category"].dropna().unique()).issuperset(wanted_cats)
-    ):
-        # → auf das neue Schema umstellen
-        df = default_mapping_df()
-        try:
-            save_csv_to_drive(df, AI_ACT_MAPPING_DRIVE_FILE_ID)
-            st.info("AI Act Mapping CSV auf Google Drive wurde auf das Default-Schema zurückgesetzt.")
-        except Exception as e:
-            st.error(f"Fehler beim Speichern des Default-Mappings nach Google Drive: {e}")
-
-    # 3) Sicherstellen, dass alle benötigten Spalten da sind
-    for col in ["pillar", "category", "detail"]:
-        if col not in df.columns:
-            df[col] = ""
-
-    df = df[["pillar", "category", "detail"]]
-
-    return df
-
-
-def save_mapping_df(df: pd.DataFrame):
-    """
-    Speichert das Mapping-DataFrame zurück nach Google Drive.
-    """
-    try:
-        save_csv_to_drive(df, AI_ACT_MAPPING_DRIVE_FILE_ID)
-    except Exception as e:
-        st.error(f"Fehler beim Speichern der AI Act Mapping CSV nach Google Drive: {e}")
 
 
 # ----------------------------------------------------
@@ -229,93 +150,37 @@ def render():
 
     st.write(
         """
-        Hier strukturierst du die **transparenzrelevanten Pflichten des AI Act** 
-        und leitest daraus deine operativen Kategorien ab.
+        Hier definierst du deine **operativen Transparenz-Kategorien** für die Analyse von Datensätzen
+        im Lichte von **Art. 10 AI Act**.  
+        
+        Wir arbeiten mit vier festen Kernkategorien, die später im Labeling verwendet werden:
 
-        **Visualisierung:**  
-        *AI Act → Kategorie → Detail*
+        1. **Data Provenance (Origin)**  
+           Beschreibt die Herkunft der Daten: Wie, wo und durch wen sie erhoben wurden,
+           welche Quellen genutzt wurden und unter welchen Bedingungen die Datenerfassung stattfand.
 
-        Derzeit sind fest hinterlegt (kannst du unten aber erweitern/ändern):
+        2. **Data Composition (Real vs. Synthetic)**  
+           Gibt an, ob der Datensatz aus realweltlichen Beobachtungen, synthetisch generierten Daten
+           oder einer Kombination beider besteht – einschließlich Hinweise auf generative Verfahren
+           oder künstliche Ergänzungen.
 
-        1. **Data Source / Provenance**  
-        2. **Synthetic Data Disclosure**  
-        3. **Fairness / Bias Disclosure**  
-        4. **Limitations & Suitability**
+        3. **Data Preparation & Processing**  
+           Dokumentiert alle Schritte der Datenaufbereitung, z. B. Cleaning, Filtering, Normalisierung,
+           Labeling, Splits oder andere Transformationen, die die Datenform oder -qualität beeinflussen.
+
+        4. **Bias & Fairness Disclosure**  
+           Beschreibt potenzielle Verzerrungen, Repräsentationsprobleme oder fairness-relevante Risiken
+           im Datensatz sowie Maßnahmen, die zur Identifikation, Bewertung oder Mitigation von Bias
+           ergriffen wurden.
         """
     )
 
-    # 1) Mapping laden (inkl. ggf. Reset auf Default-Schema)
-    df = load_mapping_df()
+    # Mindmap aus dem hardcodierten Mapping
+    df = get_mapping_df()
 
-    # 2) Mindmap anzeigen
-    st.markdown("### 🌳 Aktuelle AI Act Mindmap (4 Kern-Kategorien)")
+    st.markdown("### 🌳 AI Act Mindmap (4 Kern-Kategorien)")
     try:
         dot = build_graph_from_df(df)
         st.graphviz_chart(dot, use_container_width=True)
     except Exception as e:
         st.error(f"Mindmap-Fehler: {e}")
-
-    st.markdown("---")
-
-    # 3) Editor für die Tabelle
-    st.markdown("### ✏️ AI Act Mapping Tabelle bearbeiten")
-
-    st.caption(
-        "Du kannst Pillars (Art. 10 etc.), Kategorien und Details anpassen oder neue Zeilen hinzufügen. "
-        "Die vier Kern-Kategorien sind das Start-Setup."
-    )
-
-    edited_df = st.data_editor(
-        df,
-        num_rows="dynamic",
-        use_container_width=True,
-        key="ai_act_mapping_editor_four_core_cats",
-    )
-
-    if st.button("💾 Speichern & Mindmap aktualisieren"):
-        cleaned = edited_df.copy()
-        for col in ["pillar", "category", "detail"]:
-            cleaned[col] = cleaned[col].fillna("").astype(str).str.strip()
-
-        cleaned = cleaned[
-            cleaned[["pillar", "category", "detail"]].apply(
-                lambda row: any(len(str(v)) > 0 for v in row), axis=1
-            )
-        ]
-
-        save_mapping_df(cleaned)
-        st.success("Mapping gespeichert – Mindmap wird aktualisiert.")
-
-        if hasattr(st, "rerun"):
-            st.rerun()
-        elif hasattr(st, "experimental_rerun"):
-            st.experimental_rerun()
-
-    st.markdown("---")
-
-    # 4) Kleine AI-Act-Auszüge zu den 4 Kategorien
-    st.markdown("### 📖 Kleine AI-Act-Auszüge zu den 4 Kern-Kategorien")
-
-    with st.expander("1️⃣ Data Source / Provenance"):
-        st.write(
-            "- Art. 10(2) verlangt Transparenz über Herkunft & Erhebung der Trainingsdaten.\n"
-            "  ⇒ Operationalisiert als *Data Source / Provenance*."
-        )
-
-    with st.expander("2️⃣ Synthetic Data Disclosure"):
-        st.write(
-            "- Art. 10(5) erwähnt synthetische Daten direkt.\n"
-            "  ⇒ Offenlegung erforderlich (*Synthetic Data Disclosure*)."
-        )
-
-    with st.expander("3️⃣ Fairness / Bias Disclosure"):
-        st.write(
-            "- Art. 10(2) knüpft Datenqualität an Fairness.\n"
-            "  ⇒ Dokumentation von Bias & Fairness-Analysen."
-        )
-
-    with st.expander("4️⃣ Limitations & Suitability"):
-        st.write(
-            "- Art. 10(3) / 10(5): Zweckgebundenheit + Grenzen der Eignung.\n"
-            "  ⇒ Transparenz über intended / non-intended use."
-        )
