@@ -130,11 +130,11 @@ def _cached_readme_index(folder_id: str, version: int) -> Dict[str, str]:
     return index
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def _cached_load_labelplan(plan_file_id: str, version: int) -> pd.DataFrame:
     """
-    Gecachter Loader für label.csv. Der Parameter `version` sorgt dafür,
-    dass nach jedem Speichern eine neue Version in den Cache geschrieben wird.
+    Gecachter Loader für label.csv.
+    TTL verhindert veraltete Drive-Stände bei längeren Pausen.
     """
     return load_csv_from_drive(plan_file_id)
 
@@ -422,25 +422,43 @@ def render():
     if "readme_index_version" not in st.session_state:
         st.session_state["readme_index_version"] = 0
 
-    # Optional: Button zum manuellen Reload der Kategorien & der Dateiliste
+    # Optional: Button zum manuellen Reload der Kategorien & der Dateiliste & Labelplan
     with st.expander("⚙️ Optionen", expanded=False):
-        col_opt1, col_opt2 = st.columns(2)
+        col_opt1, col_opt2, col_opt3 = st.columns(3)
+
         with col_opt1:
             if st.button("🔄 Kategorien aus Drive neu laden", key="reload_categories_btn_marie"):
                 _reload_categories()
                 st.info("Kategorien neu geladen.")
-                if hasattr(st, "experimental_rerun"):
-                    st.experimental_rerun()
-                else:
-                    st.rerun()
+                st.rerun()
+
         with col_opt2:
             if st.button("🔄 Korpus-Dateiliste neu laden", key="reload_readme_index_btn_marie"):
                 st.session_state["readme_index_version"] += 1
                 st.info("Korpus-Dateiliste neu geladen.")
-                if hasattr(st, "experimental_rerun"):
-                    st.experimental_rerun()
-                else:
-                    st.rerun()
+                st.rerun()
+
+        with col_opt3:
+            if st.button("🔄 Labelplan von Drive neu laden", key="reload_labelplan_btn_marie"):
+                # Cache für label.csv invalidieren (falls verfügbar)
+                try:
+                    _cached_load_labelplan.clear()
+                except Exception:
+                    pass
+
+                # Version erhöhen (Cache-Key) + Session-Kopie resetten
+                st.session_state["labelplan_version"] += 1
+
+                if "df_plan_marie" in st.session_state:
+                    del st.session_state["df_plan_marie"]
+                st.session_state["df_dirty_marie"] = False
+
+                st.session_state["marie_labelplan_last_loaded"] = datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+
+                st.info("Labelplan neu von Google Drive geladen.")
+                st.rerun()
 
     # ------------------------------------------------
     # 1) label.csv aus Google Drive holen (gecached)
@@ -722,10 +740,7 @@ def render():
                     del st.session_state["ml_manual_doc_index"]
 
                 st.success("Labels lokal gespeichert! Nächstes README wird geladen …")
-                if hasattr(st, "experimental_rerun"):
-                    st.experimental_rerun()
-                else:
-                    st.rerun()
+                st.rerun()
 
     with col2:
         if st.button("⏭ README überspringen", key="ml_skip_doc"):
@@ -733,10 +748,7 @@ def render():
             if "ml_manual_doc_index" in st.session_state:
                 del st.session_state["ml_manual_doc_index"]
             st.info("README übersprungen. Nächstes README wird geladen …")
-            if hasattr(st, "experimental_rerun"):
-                st.experimental_rerun()
-            else:
-                st.rerun()
+            st.rerun()
 
     # ------------------------------------------------
     # 9) Synchronisation mit Google Drive (Batch-Upload, nur Marie-Spalten mergen)
@@ -785,10 +797,17 @@ def render():
                             "%Y-%m-%d %H:%M:%S"
                         )
 
+                        # Optional: Cache leeren, damit direkt frischer Stand gezogen wird
+                        try:
+                            _cached_load_labelplan.clear()
+                        except Exception:
+                            pass
+
                         st.success(
                             "Marie-Labels erfolgreich nach Google Drive hochgeladen "
                             "(nur Marie-Spalten aktualisiert)."
                         )
+                        st.rerun()
 
                 except Exception as e:
                     st.error(f"Fehler beim Hochladen nach Drive: {e}")
@@ -819,10 +838,7 @@ def render():
 
     if st.button("🔁 Zu dieser README springen", key="ml_jump_button"):
         st.session_state["ml_manual_doc_index"] = int(selected_jump_idx)
-        if hasattr(st, "experimental_rerun"):
-            st.experimental_rerun()
-        else:
-            st.rerun()
+        st.rerun()
 
 
 def show_labeling_marie():
