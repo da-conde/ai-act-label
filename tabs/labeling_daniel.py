@@ -130,11 +130,11 @@ def _cached_readme_index(folder_id: str, version: int) -> Dict[str, str]:
     return index
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def _cached_load_labelplan(plan_file_id: str, version: int) -> pd.DataFrame:
     """
-    Gecachter Loader für label.csv. Der Parameter `version` sorgt dafür,
-    dass nach jedem Speichern eine neue Version in den Cache geschrieben wird.
+    Gecachter Loader für label.csv.
+    TTL verhindert veraltete Drive-Stände bei längeren Pausen.
     """
     return load_csv_from_drive(plan_file_id)
 
@@ -421,25 +421,43 @@ def render():
     if "readme_index_version" not in st.session_state:
         st.session_state["readme_index_version"] = 0
 
-    # Optional: Button zum manuellen Reload der Kategorien & der Dateiliste
+    # Optional: Button zum manuellen Reload der Kategorien & der Dateiliste & Labelplan
     with st.expander("⚙️ Optionen", expanded=False):
-        col_opt1, col_opt2 = st.columns(2)
+        col_opt1, col_opt2, col_opt3 = st.columns(3)
+
         with col_opt1:
-            if st.button("🔄 Kategorien aus Drive neu laden", key="reload_categories_btn"):
+            if st.button("🔄 Kategorien aus Drive neu laden", key="reload_categories_btn_daniel"):
                 _reload_categories()
                 st.info("Kategorien neu geladen.")
-                if hasattr(st, "experimental_rerun"):
-                    st.experimental_rerun()
-                else:
-                    st.rerun()
+                st.rerun()
+
         with col_opt2:
-            if st.button("🔄 Korpus-Dateiliste neu laden", key="reload_readme_index_btn"):
+            if st.button("🔄 Korpus-Dateiliste neu laden", key="reload_readme_index_btn_daniel"):
                 st.session_state["readme_index_version"] += 1
                 st.info("Korpus-Dateiliste neu geladen.")
-                if hasattr(st, "experimental_rerun"):
-                    st.experimental_rerun()
-                else:
-                    st.rerun()
+                st.rerun()
+
+        with col_opt3:
+            if st.button("🔄 Labelplan von Drive neu laden", key="reload_labelplan_btn_daniel"):
+                # Cache für label.csv invalidieren (falls verfügbar)
+                try:
+                    _cached_load_labelplan.clear()
+                except Exception:
+                    pass
+
+                # Version erhöhen (Cache-Key) + Session-Kopie resetten
+                st.session_state["labelplan_version"] += 1
+
+                if "df_plan_daniel" in st.session_state:
+                    del st.session_state["df_plan_daniel"]
+                st.session_state["df_dirty_daniel"] = False
+
+                st.session_state["daniel_labelplan_last_loaded"] = datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+
+                st.info("Labelplan neu von Google Drive geladen.")
+                st.rerun()
 
     # ------------------------------------------------
     # 1) label.csv aus Google Drive holen (gecached)
@@ -689,7 +707,7 @@ def render():
                 label=cat,
                 options=["", "Ja (1)", "Nein (0)"],
                 default=default_val,
-                key=f"{doc_id}_{cat}",
+                key=f"{doc_id}_{cat}_daniel",
             )
 
     # ------------------------------------------------
@@ -721,10 +739,7 @@ def render():
                     del st.session_state["dl_manual_doc_index"]
 
                 st.success("Labels lokal gespeichert! Nächstes README wird geladen …")
-                if hasattr(st, "experimental_rerun"):
-                    st.experimental_rerun()
-                else:
-                    st.rerun()
+                st.rerun()
 
     with col2:
         if st.button("⏭ README überspringen", key="dl_skip_doc"):
@@ -732,10 +747,7 @@ def render():
             if "dl_manual_doc_index" in st.session_state:
                 del st.session_state["dl_manual_doc_index"]
             st.info("README übersprungen. Nächstes README wird geladen …")
-            if hasattr(st, "experimental_rerun"):
-                st.experimental_rerun()
-            else:
-                st.rerun()
+            st.rerun()
 
     # ------------------------------------------------
     # 9) Synchronisation mit Google Drive (Batch-Upload, nur Daniel-Spalten mergen)
@@ -763,14 +775,14 @@ def render():
                         st.error("In der Labelplan-Datei auf Drive fehlt die Spalte `doc_id`.")
                     else:
                         # 2) Nur Daniel-Spalten aktualisieren
-                        daniel_cols = _get_daniel_columns(df_local)
+                        daniel_cols_remote = _get_daniel_columns(df_local)
 
                         df_remote = df_remote.copy()
                         df_remote.set_index("doc_id", inplace=True)
                         df_local_idx = df_local.set_index("doc_id")
 
                         # Nur die Daniel-Spalten aus der lokalen Kopie übernehmen
-                        df_remote.update(df_local_idx[daniel_cols])
+                        df_remote.update(df_local_idx[daniel_cols_remote])
 
                         df_remote.reset_index(inplace=True)
 
@@ -784,10 +796,17 @@ def render():
                             "%Y-%m-%d %H:%M:%S"
                         )
 
+                        # Optional: Cache leeren, damit direkt frischer Stand gezogen wird
+                        try:
+                            _cached_load_labelplan.clear()
+                        except Exception:
+                            pass
+
                         st.success(
                             "Daniel-Labels erfolgreich nach Google Drive hochgeladen "
                             "(nur Daniel-Spalten aktualisiert)."
                         )
+                        st.rerun()
 
                 except Exception as e:
                     st.error(f"Fehler beim Hochladen nach Drive: {e}")
@@ -818,10 +837,7 @@ def render():
 
     if st.button("🔁 Zu dieser README springen", key="dl_jump_button"):
         st.session_state["dl_manual_doc_index"] = int(selected_jump_idx)
-        if hasattr(st, "experimental_rerun"):
-            st.experimental_rerun()
-        else:
-            st.rerun()
+        st.rerun()
 
 
 def show_labeling_daniel():
