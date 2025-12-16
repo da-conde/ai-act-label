@@ -1,81 +1,209 @@
+# tabs/tab_ai_act_mapping.py  (ONLINE / Streamlit Cloud Variante)
+
 import streamlit as st
 import graphviz
 import pandas as pd
+from pathlib import Path
 
 
 # ----------------------------------------------------
-# Hardcodiertes Mapping (4 Kategorien + "formale" Erklärung)
+# Storage (ONLINE)
+# ----------------------------------------------------
+# Streamlit Cloud: nutze persistentes Volume, falls vorhanden.
+# Fallback: lokales Projektverzeichnis.
+try:
+    _BASE_DIR = Path(st.secrets.get("STORAGE_DIR", "."))
+except Exception:
+    _BASE_DIR = Path(".")
+
+DATA_DIR = _BASE_DIR / "data"
+MAPPING_FILE = DATA_DIR / "ai_act_mapping.csv"
+
+
+# ----------------------------------------------------
+# Hilfsfunktionen
 # ----------------------------------------------------
 
-def get_mapping_df() -> pd.DataFrame:
+def ensure_data_dir():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def default_mapping_df() -> pd.DataFrame:
     """
-    Liefert das feste Schema mit GENAU den vier Kernkategorien:
-      1) Data Provenance (Origin)
-      2) Data Composition (Real vs. Synthetic)
-      3) Data Preparation & Processing
-      4) Bias & Fairness Disclosure
+    Default-Schema: EXACTLY ONE ROW PER CATEGORY (für Mindmap: 1 Pfeil pro Kategorie)
 
-    'detail' enthält eine eher formale Beschreibung (oben im Text genutzt),
-    wird aber NICHT mehr für die Mindmap verwendet.
+    Kategorien (online, v2):
+      1) Data Provenance
+      2) Data Composition
+      3) Obtained From
+      4) Data Preparation and Processing
+      5) Bias and Fairness Disclosure
+      6) Annahmen über den Datensatz
     """
     rows = [
         {
-            "pillar": "Art. 10 – Data Governance & Data Quality",
-            "category": "Data Provenance (Origin)",
-            "detail": (
-                "Beschreibt die Herkunft der Daten: Wie, wo und durch wen sie erhoben wurden, "
-                "welche Quellen genutzt wurden und unter welchen Bedingungen die Datenerfassung stattfand."
-            ),
+            "pillar": "Art. 10(2)(b)",
+            "category": "Data Provenance",
+            "detail": "Quelle/Herkunft des Datensatzes (inkl. direkter Vorgänger bei Derived Datasets).",
         },
         {
-            "pillar": "Art. 10 – Data Governance & Data Quality",
-            "category": "Data Composition (Real vs. Synthetic)",
-            "detail": (
-                "Gibt an, ob der Datensatz aus realweltlichen Beobachtungen, synthetisch generierten Daten "
-                "oder einer Kombination beider besteht – einschließlich Hinweise auf generative Verfahren "
-                "oder künstliche Ergänzungen."
-            ),
+            "pillar": "Art. 10(2)",
+            "category": "Data Composition",
+            "detail": "Zusammensetzung/Typ der Daten (z. B. real-world vs. synthetic; selbst erhoben).",
         },
         {
-            "pillar": "Art. 10 – Data Governance & Data Quality",
-            "category": "Data Preparation & Processing",
-            "detail": (
-                "Dokumentiert alle Schritte der Datenaufbereitung, z. B. Cleaning, Filtering, Normalisierung, "
-                "Labeling, Splits oder andere Transformationen, die die Datenform oder -qualität beeinflussen."
-            ),
+            "pillar": "Annex IV 2(d)",
+            "category": "Obtained From",
+            "detail": "Wie die Daten bezogen/erhoben/selektiert wurden (z. B. Scraping, Sensor, API, Sampling).",
         },
         {
-            "pillar": "Art. 10 – Data Governance & Data Quality",
-            "category": "Bias & Fairness Disclosure",
-            "detail": (
-                "Beschreibt potenzielle Verzerrungen, Repräsentationsprobleme oder fairness-relevante Risiken "
-                "im Datensatz sowie Maßnahmen, die zur Identifikation, Bewertung oder Mitigation von Bias "
-                "ergriffen wurden."
-            ),
+            "pillar": "Art. 10(2)(c)",
+            "category": "Data Preparation and Processing",
+            "detail": "Welche Verarbeitungsschritte ab Rohdaten erfolgt sind (oder explizit: keine).",
+        },
+        {
+            "pillar": "Art. 10(2)(f)(g)",
+            "category": "Bias and Fairness Disclosure",
+            "detail": "Bias/Fairness/Representativität: bekannte Risiken oder durchgeführte Analysen.",
+        },
+        {
+            "pillar": "Art. 10(2)(d)",
+            "category": "Annahmen über den Datensatz",
+            "detail": "Sachebene & Kontext: was die Daten darstellen/messen sollen (nicht nur technische Specs).",
         },
     ]
     return pd.DataFrame(rows, columns=["pillar", "category", "detail"])
 
 
-# ----------------------------------------------------
-# Graphviz-Mindmap (nur 2 Ebenen)
-# ----------------------------------------------------
-
-def build_two_level_graph(df: pd.DataFrame) -> graphviz.Digraph:
+def load_mapping_df() -> pd.DataFrame:
     """
-    Mindmap-Struktur (2 Ebenen):
+    Lädt die Mapping-Tabelle.
+
+    Zielzustand:
+      - EXACTLY ONE ROW PER CATEGORY
+      - Falls Datei fehlt oder Kategorien nicht passen -> Reset auf Default.
+      - Falls Datei existiert, aber Kategorien mehrfach vorkommen -> auf 1 Row pro Kategorie reduzieren
+        (erste nicht-leere Detail-Zeile wird genommen).
+    """
+    ensure_data_dir()
+
+    wanted_cats = [
+        "Data Provenance",
+        "Data Composition",
+        "Obtained From",
+        "Data Preparation and Processing",
+        "Bias and Fairness Disclosure",
+        "Annahmen über den Datensatz",
+    ]
+
+    if MAPPING_FILE.exists():
+        try:
+            df = pd.read_csv(MAPPING_FILE)
+        except Exception:
+            df = pd.DataFrame()
+    else:
+        df = pd.DataFrame()
+
+    # Wenn leer/inkonsistent -> Default
+    if df.empty or "category" not in df.columns:
+        df = default_mapping_df()
+        df.to_csv(MAPPING_FILE, index=False)
+        return df
+
+    # Spalten absichern
+    for col in ["pillar", "category", "detail"]:
+        if col not in df.columns:
+            df[col] = ""
+
+    # trim
+    df = df[["pillar", "category", "detail"]].copy()
+    for col in ["pillar", "category", "detail"]:
+        df[col] = df[col].fillna("").astype(str).str.strip()
+
+    present = set(df["category"].dropna().unique().tolist())
+    if not set(wanted_cats).issubset(present):
+        df = default_mapping_df()
+        df.to_csv(MAPPING_FILE, index=False)
+        return df
+
+    # REDUKTION: genau 1 Zeile pro Kategorie
+    reduced_rows = []
+    for cat in wanted_cats:
+        sub = df[df["category"] == cat].copy()
+        sub_non_empty = sub[sub["detail"].astype(str).str.len() > 0]
+        pick = sub_non_empty.iloc[0] if not sub_non_empty.empty else sub.iloc[0]
+        reduced_rows.append(
+            {
+                "pillar": pick.get("pillar", "").strip(),
+                "category": cat,
+                "detail": pick.get("detail", "").strip(),
+            }
+        )
+
+    df_reduced = pd.DataFrame(reduced_rows, columns=["pillar", "category", "detail"])
+    df_reduced.to_csv(MAPPING_FILE, index=False)
+    return df_reduced
+
+
+def save_mapping_df(df: pd.DataFrame):
+    """
+    Speichert NUR 1 Zeile pro Kategorie (erste gewinnt), damit die Mindmap
+    pro Kategorie genau einen Detail-Knoten hat.
+    """
+    ensure_data_dir()
+
+    wanted_cats = [
+        "Data Provenance",
+        "Data Composition",
+        "Obtained From",
+        "Data Preparation and Processing",
+        "Bias and Fairness Disclosure",
+        "Annahmen über den Datensatz",
+    ]
+
+    cleaned = df.copy()
+    for col in ["pillar", "category", "detail"]:
+        if col not in cleaned.columns:
+            cleaned[col] = ""
+        cleaned[col] = cleaned[col].fillna("").astype(str).str.strip()
+
+    cleaned = cleaned[cleaned["category"].astype(str).str.len() > 0]
+
+    reduced_rows = []
+    defaults = default_mapping_df()
+    for cat in wanted_cats:
+        sub = cleaned[cleaned["category"] == cat]
+        if sub.empty:
+            d = defaults[defaults["category"] == cat].iloc[0].to_dict()
+            reduced_rows.append(d)
+            continue
+
+        sub_non_empty = sub[sub["detail"].astype(str).str.len() > 0]
+        pick = sub_non_empty.iloc[0] if not sub_non_empty.empty else sub.iloc[0]
+        reduced_rows.append(
+            {
+                "pillar": pick.get("pillar", "").strip(),
+                "category": cat,
+                "detail": pick.get("detail", "").strip(),
+            }
+        )
+
+    out = pd.DataFrame(reduced_rows, columns=["pillar", "category", "detail"])
+    out.to_csv(MAPPING_FILE, index=False)
+
+
+def build_graph_from_df(df: pd.DataFrame) -> graphviz.Digraph:
+    """
+    Mindmap: pro Kategorie genau ein Detail-Knoten.
 
       AI Act
-        → Kategorie (4 Kern-Kategorien)
-
-    'pillar' wird nur zur Info in der Beschriftung genutzt.
-    Es gibt KEINE Detail-Knoten mehr.
+        → Kategorie (mit Pillar-Suffix)
+             → Detail (1 kurzer Kasten)
     """
-    dot = graphviz.Digraph(comment="AI Act Transparency Mapping – 2-Level")
+    dot = graphviz.Digraph(comment="AI Act Transparency Mapping")
     dot.attr(rankdir="TB")
     dot.attr("node", shape="box", style="rounded,filled", fillcolor="#F5F5F5")
 
-    # Root Node
     root_id = "root"
     root_label = "AI Act\n(Transparenz- & Datenpflichten)"
     dot.node(root_id, root_label)
@@ -87,78 +215,36 @@ def build_two_level_graph(df: pd.DataFrame) -> graphviz.Digraph:
         node_counter += 1
         return f"n{node_counter}"
 
-    # DataFrame bereinigen
     df_clean = df.copy()
-    for col in ["pillar", "category"]:
+    for col in ["pillar", "category", "detail"]:
         df_clean[col] = df_clean[col].fillna("").astype(str).str.strip()
 
-    # Nur Zeilen mit Kategorie
-    df_clean = df_clean[df_clean["category"] != ""]
     if df_clean.empty:
-        return dot  # nur Root
+        return dot
 
-    # Kategorie → Pillars (nur für Anzeige)
-    cat_to_pillars = {}
+    category_nodes = {}
     for _, row in df_clean.iterrows():
         cat = row["category"]
         pil = row["pillar"]
-        if not cat:
+        if not cat or cat in category_nodes:
             continue
-        cat_to_pillars.setdefault(cat, set())
-        if pil:
-            cat_to_pillars[cat].add(pil)
-
-    # Kategorie-Knoten direkt unter AI Act
-    for cat, pillar_set in cat_to_pillars.items():
         c_id = new_id()
-        pillar_suffix = ""
-        if pillar_set:
-            first_pillar = list(pillar_set)[0]
-            pillar_suffix = f"\n({first_pillar})"
-        label = f"{cat}{pillar_suffix}"
-        dot.node(c_id, label)
+        suffix = f"\n({pil})" if pil else ""
+        dot.node(c_id, f"{cat}{suffix}")
         dot.edge(root_id, c_id)
+        category_nodes[cat] = c_id
+
+    for _, row in df_clean.iterrows():
+        cat = row["category"]
+        detail = row["detail"]
+        if not cat or cat not in category_nodes:
+            continue
+        c_id = category_nodes[cat]
+        d_id = new_id()
+        dot.node(d_id, detail, shape="note", fillcolor="#FFFFFF")
+        dot.edge(c_id, d_id)
 
     return dot
-
-
-# ----------------------------------------------------
-# Einfache Anleitungs-Texte für das Labeling
-# (für Readmes / Dataset-Beschreibungen)
-# ----------------------------------------------------
-
-def get_simple_guidance() -> dict:
-    """
-    Sehr einfache, kurze Erklärungen für Labeler:innen –
-    direkt darauf ausgerichtet, was in README / Datensatzbeschreibung
-    gesucht werden soll.
-    """
-    return {
-        "Data Provenance (Origin)": (
-            "Schau nach, ob beschrieben wird, **woher** die Daten kommen.\n\n"
-            "- Werden Datenquellen genannt (z. B. Sensoren, Nutzer:innen, Logs, Web-Scraping)?\n"
-            "- Wird erklärt, wie die Daten erhoben wurden (z. B. Studie, Umfrage, Plattform)?\n"
-            "- Ziel: Man versteht grob, aus welchem Kontext die Daten stammen."
-        ),
-        "Data Composition (Real vs. Synthetic)": (
-            "Prüfe, ob erwähnt wird, ob die Daten **real**, **synthetisch** oder eine Mischung sind.\n\n"
-            "- Steht irgendwo, dass Daten generiert, simuliert oder synthetisch erstellt wurden?\n"
-            "- Oder wird klar gesagt, dass es echte Beobachtungsdaten sind?\n"
-            "- Ziel: Klarheit darüber, ob wir es mit Real-World-Daten, Synthetic Data oder einem Mix zu tun haben."
-        ),
-        "Data Preparation & Processing": (
-            "Achte darauf, ob Aufbereitungsschritte beschrieben werden.\n\n"
-            "- Werden Schritte wie Cleaning, Filtering, Aggregation, Anonymisierung, Normalisierung genannt?\n"
-            "- Gibt es Infos zu Train/Dev/Test-Splits oder Labeling-Prozessen?\n"
-            "- Ziel: Man bekommt ein Gefühl, was mit den Rohdaten gemacht wurde, bevor sie im Datensatz gelandet sind."
-        ),
-        "Bias & Fairness Disclosure": (
-            "Suche nach Hinweisen auf mögliche Verzerrungen oder Fairness-Themen.\n\n"
-            "- Werden Limitierungen der Repräsentativität erwähnt (z. B. bestimmte Gruppen fehlen)?\n"
-            "- Gibt es Aussagen zu Bias, Fairness-Analysen oder bekannten Schwächen des Datensatzes?\n"
-            "- Ziel: Transparenz darüber, wo der Datensatz unfair, unvollständig oder potenziell problematisch sein könnte."
-        ),
-    }
 
 
 # ----------------------------------------------------
@@ -166,60 +252,97 @@ def get_simple_guidance() -> dict:
 # ----------------------------------------------------
 
 def render():
-    st.subheader("📚 AI Act Mapping – Transparenzanforderungen")
+    st.subheader("📚 AI Act Mapping – Transparenzanforderungen (Online)")
 
     st.write(
         """
-        Hier definierst du deine **operativen Transparenz-Kategorien** für die Analyse von Datensätzen
-        im Lichte von **Art. 10 AI Act**.  
-        
-        Wir arbeiten mit vier festen Kernkategorien, die später im Labeling für README- und
-        Datensatzbeschreibungen verwendet werden:
+        Hier strukturierst du die **transparenzrelevanten Pflichten des AI Act**
+        und leitest daraus deine operativen Kategorien ab.
 
-        1. **Data Provenance (Origin)**  
-           Beschreibt die Herkunft der Daten: Wie, wo und durch wen sie erhoben wurden,
-           welche Quellen genutzt wurden und unter welchen Bedingungen die Datenerfassung stattfand.
+        **Visualisierung:**
+        *AI Act → Kategorie → 1 kurzer Detail-Kasten*
 
-        2. **Data Composition (Real vs. Synthetic)**  
-           Gibt an, ob der Datensatz aus realweltlichen Beobachtungen, synthetisch generierten Daten
-           oder einer Kombination beider besteht – einschließlich Hinweise auf generative Verfahren
-           oder künstliche Ergänzungen.
-
-        3. **Data Preparation & Processing**  
-           Dokumentiert alle Schritte der Datenaufbereitung, z. B. Cleaning, Filtering, Normalisierung,
-           Labeling, Splits oder andere Transformationen, die die Datenform oder -qualität beeinflussen.
-
-        4. **Bias & Fairness Disclosure**  
-           Beschreibt potenzielle Verzerrungen, Repräsentationsprobleme oder fairness-relevante Risiken
-           im Datensatz sowie Maßnahmen, die zur Identifikation, Bewertung oder Mitigation von Bias
-           ergriffen wurden.
+        Kategorien (online, v2):
+        1. **Data Provenance**
+        2. **Data Composition**
+        3. **Obtained From**
+        4. **Data Preparation and Processing**
+        5. **Bias and Fairness Disclosure**
+        6. **Annahmen über den Datensatz**
         """
     )
 
-    # Mindmap (2 Ebenen)
-    df = get_mapping_df()
+    df = load_mapping_df()
 
-    st.markdown("### 🌳 AI Act Mindmap (2 Ebenen)")
+    st.markdown("### 🌳 Aktuelle AI Act Mindmap (1 Detail pro Kategorie)")
     try:
-        dot = build_two_level_graph(df)
+        dot = build_graph_from_df(df)
         st.graphviz_chart(dot, use_container_width=True)
     except Exception as e:
         st.error(f"Mindmap-Fehler: {e}")
 
     st.markdown("---")
 
-    # Anleitung / Erklärung für das Labeling
-    st.markdown("### 📝 Anleitung für das Labeling von Readmes & Dataset-Beschreibungen")
-
-    st.write(
-        """
-        Unten findest du für jede Kategorie eine kurze, praktische Erklärung,  
-        **worum es beim Labeling geht** und **wonach du im Text suchen sollst**.
-        """
+    st.markdown("### ✏️ AI Act Mapping Tabelle bearbeiten (1 Zeile pro Kategorie)")
+    st.caption(
+        "Hier bearbeitest du pro Kategorie genau **eine** kurze Erklärung (Detail). "
+        "Beim Speichern werden ggf. Duplikate wieder auf 1 Zeile pro Kategorie reduziert."
     )
 
-    simple_guidance = get_simple_guidance()
+    edited_df = st.data_editor(
+        df,
+        num_rows="fixed",
+        use_container_width=True,
+        key="ai_act_mapping_editor_one_row_per_cat_online",
+    )
 
-    for cat, text in simple_guidance.items():
-        with st.expander(cat, expanded=False):
-            st.write(text)
+    if st.button("💾 Speichern & Mindmap aktualisieren", key="ai_act_mapping_save_online"):
+        save_mapping_df(edited_df)
+        st.success("Mapping gespeichert – Mindmap wird aktualisiert.")
+        if hasattr(st, "rerun"):
+            st.rerun()
+        elif hasattr(st, "experimental_rerun"):
+            st.experimental_rerun()
+
+    st.markdown("---")
+    st.markdown("### 📖 Kleine AI-Act-Auszüge (ausführlicher)")
+
+    with st.expander("1️⃣ Data Provenance", expanded=False):
+        st.write(
+            "- **Art. 10(2)(b)**: Nachvollziehbarkeit der Datenbasis (Herkunft/Quelle).\n"
+            "- In eurer Logik zählt bei Derived Datasets der **direkte Vorgänger-Datensatz** als Provenance-Stufe davor."
+        )
+
+    with st.expander("2️⃣ Data Composition", expanded=False):
+        st.write(
+            "- Art. 10 knüpft Datenqualität an den Zweck.\n"
+            "- Dafür braucht es Klarheit über **real-world vs. synthetic** (oder selbst erhoben)."
+        )
+
+    with st.expander("3️⃣ Obtained From", expanded=False):
+        st.write(
+            "- **Annex IV 2(d)**: Daten müssen als „**obtained and selected**“ dokumentiert sein.\n"
+            "- Operationalisierung: **Wie** wurden Daten bezogen/erhoben/selektiert (Scraping, Sensor, API, Sampling)."
+        )
+
+    with st.expander("4️⃣ Data Preparation and Processing", expanded=False):
+        st.write(
+            "- **Art. 10(2)(c)**: Verarbeitungsschritte ab Rohdaten.\n"
+            "- Erwartet: **was** gemacht wurde (oder explizit: nichts) und ggf. Abweichung vom Ausgangsdatensatz."
+        )
+
+    with st.expander("5️⃣ Bias and Fairness Disclosure", expanded=False):
+        st.write(
+            "- **Art. 10(2)(f)(g)**: Risiko systematischer Verzerrungen.\n"
+            "- Operationalisierung: Bias/Fairness/Representativität + ggf. Analysen."
+        )
+
+    with st.expander("6️⃣ Annahmen über den Datensatz", expanded=False):
+        st.write(
+            "- **Art. 10(2)(d)** (eure Zuordnung): Sachebene & Kontext.\n"
+            "- Operationalisierung: Was stellen die Daten dar / Ziel / intended use (nicht nur technische Specs)."
+        )
+
+
+def show_ai_act_mapping():
+    render()
