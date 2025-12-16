@@ -11,7 +11,7 @@ from utils.gdrive import load_json_from_drive, save_json_to_drive
 # ----------------------------------------------------
 
 # File-ID deiner categories.json auf Google Drive
-CATEGORIES_DRIVE_FILE_ID = "1EmZHSfSwbEw4JYsyRYvVBSbY4g4FSOi5"
+CATEGORIES_DRIVE_FILE_ID = "1ei0nY3bhTbVM1vbWQLcvhXDj8YMTqOVR"
 
 
 # ----------------------------------------------------
