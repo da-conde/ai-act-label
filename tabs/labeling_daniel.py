@@ -1,3 +1,5 @@
+# tabs/tab_labeling_daniel.py  (ONLINE / Streamlit Cloud Variante – Daniel)
+
 from typing import List, Dict
 import re
 import html
@@ -32,6 +34,15 @@ SKIPPED_FILENAME = "skipped_daniel.csv"
 ANNOTATOR_NAME = "daniel"  # fix für diesen Tab
 CORPUS_NAME = "label-corpus-v1"  # nur für Anzeige
 
+# Kategorien mit 3 Ausprägungen (A/K/N)
+TERNARY_CATEGORIES = {
+    "Data Provenance",
+    "Data Preparation and Processing",
+    "Data Preparation & Processing",
+    "Data Preparation and Processing (alle Verarbeitungsschritte ab Existenz der Rohdaten)",
+    "Data Preparation and Processing (all processing steps after raw data exists)",
+}
+
 
 # --------------------------------------------------------------------
 # Hilfsfunktionen: Kategorien (Drive + Session-Cache)
@@ -43,19 +54,15 @@ def _load_categories_raw() -> Dict:
         data = load_json_from_drive(CATEGORIES_DRIVE_FILE_ID)
         if isinstance(data, dict):
             return data
-        else:
-            st.error("`categories.json` auf Google Drive hat keine Dict-Struktur.")
-            return {}
+        st.error("`categories.json` auf Google Drive hat keine Dict-Struktur.")
+        return {}
     except Exception as e:
         st.error(f"Fehler beim Laden von Kategorien aus Google Drive: {e}")
         return {}
 
 
 def _get_categories_cached() -> Dict:
-    """
-    Kategorien einmal pro Session von Drive laden und dann aus st.session_state holen.
-    So vermeiden wir Drive-Requests bei jedem Klick.
-    """
+    """Kategorien einmal pro Session von Drive laden und dann aus st.session_state holen."""
     key = "daniel_categories_cache"
     if key not in st.session_state:
         st.session_state[key] = _load_categories_raw()
@@ -63,7 +70,7 @@ def _get_categories_cached() -> Dict:
 
 
 def _reload_categories():
-    """Manuelles Neuladen aus Drive (falls du im Categories-Tab etwas geändert hast)."""
+    """Manuelles Neuladen aus Drive (falls im Categories-Tab etwas geändert wurde)."""
     st.session_state["daniel_categories_cache"] = _load_categories_raw()
 
 
@@ -72,9 +79,7 @@ def _reload_categories():
 # --------------------------------------------------------------------
 
 def _get_labelplan_folder_id() -> str:
-    """
-    Sucht im Korpus-Ordner einen Unterordner mit Namen 'labelplan'.
-    """
+    """Sucht im Korpus-Ordner einen Unterordner mit Namen 'labelplan'."""
     folders = list_files_in_folder(
         LABEL_CORPUS_DRIVE_FOLDER_ID,
         mime_type="application/vnd.google-apps.folder",
@@ -89,9 +94,7 @@ def _get_labelplan_folder_id() -> str:
 
 
 def _get_labelplan_file_id() -> str:
-    """
-    Liefert die fileId von label.csv in labelplan/.
-    """
+    """Liefert die fileId von label.csv in labelplan/."""
     labelplan_folder_id = _get_labelplan_folder_id()
     files = list_files_in_folder(labelplan_folder_id)
 
@@ -105,25 +108,15 @@ def _get_labelplan_file_id() -> str:
         if f["name"].lower().endswith(".csv"):
             return f["id"]
 
-    raise RuntimeError(
-        "In `labelplan/` wurde keine `label.csv` (oder sonstige CSV) gefunden."
-    )
+    raise RuntimeError("In `labelplan/` wurde keine `label.csv` (oder sonstige CSV) gefunden.")
 
 
 @st.cache_data(show_spinner=False)
 def _cached_readme_index(folder_id: str, version: int) -> Dict[str, str]:
-    """
-    Gecachtes Mapping filename -> file_id für alle Dateien im
-    Korpus-Ordner (ohne Unterordner).
-
-    Der Parameter `version` sorgt dafür, dass wir den Cache manuell
-    invalidieren können (z. B. nach dem Kopieren eines neuen Korpus
-    nach Google Drive).
-    """
+    """Gecachtes Mapping filename -> file_id für alle Dateien im Korpus-Ordner (ohne Unterordner)."""
     files = list_files_in_folder(folder_id)
     index: Dict[str, str] = {}
     for f in files:
-        # Ordner ausklammern
         if f["mimeType"] == "application/vnd.google-apps.folder":
             continue
         index[f["name"]] = f["id"]
@@ -132,10 +125,7 @@ def _cached_readme_index(folder_id: str, version: int) -> Dict[str, str]:
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _cached_load_labelplan(plan_file_id: str, version: int) -> pd.DataFrame:
-    """
-    Gecachter Loader für label.csv.
-    TTL verhindert veraltete Drive-Stände bei längeren Pausen.
-    """
+    """Gecachter Loader für label.csv."""
     return load_csv_from_drive(plan_file_id)
 
 
@@ -146,27 +136,15 @@ def _cached_load_readme_text(file_id: str) -> str:
 
 
 # --------------------------------------------------------------------
-# YAML-Frontmatter entfernen & Sanitizer
+# YAML-Frontmatter entfernen & Sanitizer (ONLINE: wie local – mit html.escape)
 # --------------------------------------------------------------------
 
 def _strip_frontmatter(text: str) -> str:
-    """
-    Entfernt optionales YAML-Frontmatter am Anfang (HuggingFace-Style):
-
-    ---
-    license: ...
-    configs:
-      - ...
-    ---
-    # Überschrift
-
-    Alles zwischen den beiden '---'-Linien am Anfang wird entfernt.
-    """
+    """Entfernt optionales YAML-Frontmatter am Anfang (HuggingFace-Style)."""
     lines = text.splitlines()
     if not lines:
         return text
 
-    # erste nicht-leere Zeile suchen
     first_non_empty_idx = None
     for i, line in enumerate(lines):
         if line.strip():
@@ -177,36 +155,121 @@ def _strip_frontmatter(text: str) -> str:
         return text
 
     if lines[first_non_empty_idx].strip() != "---":
-        # kein Frontmatter
         return text
 
-    # zweite '---'-Zeile suchen
     for j in range(first_non_empty_idx + 1, len(lines)):
         if lines[j].strip() == "---":
-            # alles danach behalten
             return "\n".join(lines[j + 1:])
 
-    # falls keine zweite --- gefunden → Text unverändert lassen
     return text
 
 
 def _sanitize_text_for_html(text: str) -> str:
     """
-    Entfernt problematische Unicode-Zeichen, aber KEIN html.escape mehr,
-    damit Markdown / Sonderzeichen erhalten bleiben.
+    Entfernt problematische Unicode-Zeichen und escaped HTML (stabil für unsafe HTML-Markup).
     """
     cleaned_chars = []
     for ch in text:
         code = ord(ch)
-        # Steuerzeichen 0x00–0x1F (außer \t, \n, \r) entfernen
         if code < 32 and ch not in ("\t", "\n", "\r"):
             continue
-        # Surrogates entfernen
         if 0xD800 <= code <= 0xDFFF:
             continue
         cleaned_chars.append(ch)
     safe = "".join(cleaned_chars)
-    return safe
+    return html.escape(safe)
+
+
+# --------------------------------------------------------------------
+# Label-Optionen (2 oder 3 Ausprägungen)
+# --------------------------------------------------------------------
+
+def _normalize_cat_name(cat: str) -> str:
+    return (cat or "").strip()
+
+
+def _is_ternary_category(category_name: str) -> bool:
+    """
+    Entscheidet, ob eine Kategorie 3 Ausprägungen hat (A/K/N).
+    Robust: entweder exakter Name oder per Heuristik.
+    """
+    c = _normalize_cat_name(category_name)
+
+    if c in TERNARY_CATEGORIES:
+        return True
+
+    c_low = c.lower()
+    if "provenance" in c_low:
+        return True
+    if "preparation" in c_low or "processing" in c_low:
+        return True
+
+    return False
+
+
+def _label_options_for_category(category_name: str) -> List[str]:
+    if _is_ternary_category(category_name):
+        return ["—", "A", "K", "N"]  # Ausreichend, Unklar, Unzureichend
+    return ["—", "A", "N"]          # Ausreichend, Unzureichend
+
+
+def _parse_label_choice(category_name: str, choice: str):
+    """
+    Rückgabe:
+      - ternär: A=2, K=1, N=0
+      - binär: A=1, N=0
+      - None wenn nicht gesetzt
+    """
+    if not choice or str(choice).strip() in ("", "—"):
+        return None
+
+    c = str(choice).strip().upper()
+    ternary = _is_ternary_category(category_name)
+
+    if ternary:
+        if c == "A":
+            return 2
+        if c == "K":
+            return 1
+        if c == "N":
+            return 0
+        return None
+
+    if c == "A":
+        return 1
+    if c == "N":
+        return 0
+    return None
+
+
+def _format_existing_label_for_ui(category_name: str, existing_val) -> str:
+    """
+    Wandelt gespeicherten Labelwert zurück in UI-Default:
+      - ternär: 2→A, 1→K, 0→N
+      - binär: 1→A, 0→N
+      - sonst → —
+    """
+    if existing_val is None or (isinstance(existing_val, float) and pd.isna(existing_val)):
+        return "—"
+    try:
+        v = int(existing_val)
+    except Exception:
+        return "—"
+
+    if _is_ternary_category(category_name):
+        if v == 2:
+            return "A"
+        if v == 1:
+            return "K"
+        if v == 0:
+            return "N"
+        return "—"
+
+    if v == 1:
+        return "A"
+    if v == 0:
+        return "N"
+    return "—"
 
 
 # --------------------------------------------------------------------
@@ -217,12 +280,7 @@ def _collect_positive_keywords_by_category(
     categories_cfg: Dict,
     categories_to_label: List[str],
 ) -> Dict[str, List[str]]:
-    """
-    Liefert pro Kategorie die POS-Keywords:
-      {category_name: [kw1, kw2, ...]}
-
-    Nutzt bevorzugt "sentence_keywords_positive" aus categories.json.
-    """
+    """Liefert pro Kategorie die POS-Keywords."""
     result: Dict[str, List[str]] = {}
     for cat in categories_to_label:
         cfg = categories_cfg.get(cat, {})
@@ -243,33 +301,25 @@ def _collect_positive_keywords_by_category(
 
 
 def _highlight_keywords_multi(text: str, kw_color_pairs: List[Dict[str, str]]) -> str:
-    """
-    Mehrfarbiges Keyword-Highlighting:
-    kw_color_pairs: Liste von Dicts mit {'keyword': ..., 'color': ...}
-    """
+    """Mehrfarbiges Keyword-Highlighting (input wird HTML-escaped erwartet)."""
     safe_text = _sanitize_text_for_html(text)
     if not kw_color_pairs:
         return safe_text
 
     highlighted = safe_text
-    # längere Keywords zuerst → stabileres Matching
-    sorted_pairs = sorted(
-        kw_color_pairs,
-        key=lambda x: len(x["keyword"]),
-        reverse=True,
-    )
+    sorted_pairs = sorted(kw_color_pairs, key=lambda x: len(x["keyword"]), reverse=True)
 
     for pair in sorted_pairs:
         kw = pair["keyword"]
         color = pair["color"]
         if not kw:
             continue
-        pattern = re.compile(re.escape(kw), re.IGNORECASE)
+        pattern = re.compile(re.escape(html.escape(kw)), re.IGNORECASE)
 
         def repl(match):
             return (
-                f"<mark style='background-color:{color}; "
-                f"padding:0 2px;'>{match.group(0)}</mark>"
+                f"<mark style='background-color:{color}; padding:0 2px;'>"
+                f"{match.group(0)}</mark>"
             )
 
         highlighted = pattern.sub(repl, highlighted)
@@ -282,14 +332,10 @@ def _highlight_keywords_multi(text: str, kw_color_pairs: List[Dict[str, str]]) -
 # --------------------------------------------------------------------
 
 def _load_skipped_ids_raw() -> List[str]:
-    """
-    Direkt von Drive laden (wird dann in Session-Cache gelegt).
-    Sucht die Datei `skipped_daniel.csv` im labelplan-Unterordner.
-    """
+    """Direkt von Drive laden (danach Cache)."""
     try:
         labelplan_folder_id = _get_labelplan_folder_id()
     except Exception as e:
-        # Wenn es den labelplan-Ordner nicht gibt, einfach keine Skips
         st.warning(f"Skip-Dateien konnten nicht geladen werden: {e}")
         return []
 
@@ -302,50 +348,40 @@ def _load_skipped_ids_raw() -> List[str]:
 
 
 def _get_skipped_ids_cached() -> List[str]:
-    """
-    Skipped-IDs einmal pro Session von Drive holen und dann in
-    st.session_state vorhalten.
-    """
     key = "daniel_skipped_cache"
     if key not in st.session_state:
         st.session_state[key] = _load_skipped_ids_raw()
     return st.session_state[key]
 
 
-def _append_skipped_id(doc_id: str, filename: str):
-    """
-    doc_id + filename in skipped_daniel.csv im labelplan-Ordner ergänzen
-    und Session-Cache aktualisieren.
-    """
-    # Zielordner jetzt: labelplan-Unterordner
+def _append_skipped_id(corpus_doc_id: str, filename: str):
+    """doc_id + filename in skipped_daniel.csv ergänzen (Drive + Cache)."""
     try:
         labelplan_folder_id = _get_labelplan_folder_id()
     except Exception as e:
         st.error(f"Skip-Datei konnte nicht aktualisiert werden (labelplan-Ordner fehlt?): {e}")
         return
 
-    # 1) Auf Drive schreiben
     df = load_csv_from_drive_by_name(labelplan_folder_id, SKIPPED_FILENAME)
     if df is None or df.empty:
         df = pd.DataFrame(columns=["doc_id", "filename"])
+
     if "doc_id" not in df.columns:
         df["doc_id"] = []
     if "filename" not in df.columns:
         df["filename"] = []
 
-    if doc_id not in df["doc_id"].astype(str).values:
+    if str(corpus_doc_id) not in df["doc_id"].astype(str).values:
         df = pd.concat(
-            [df, pd.DataFrame([{"doc_id": doc_id, "filename": filename}])],
+            [df, pd.DataFrame([{"doc_id": str(corpus_doc_id), "filename": filename}])],
             ignore_index=True,
         )
-        # ⬇️ Speichern jetzt im labelplan-Ordner
         save_csv_to_drive_by_name(df, labelplan_folder_id, SKIPPED_FILENAME)
 
-    # 2) Session-Cache aktualisieren
     key = "daniel_skipped_cache"
     skipped = st.session_state.get(key, [])
-    if doc_id not in skipped:
-        skipped.append(doc_id)
+    if str(corpus_doc_id) not in skipped:
+        skipped.append(str(corpus_doc_id))
     st.session_state[key] = skipped
 
 
@@ -354,38 +390,32 @@ def _append_skipped_id(doc_id: str, filename: str):
 # --------------------------------------------------------------------
 
 def _get_daniel_columns(df_plan: pd.DataFrame) -> List[str]:
-    """Alle Spalten vom Typ Daniel__<Kategorie>."""
     return [c for c in df_plan.columns if c.startswith("Daniel__")]
 
 
 def _compute_progress(df_plan: pd.DataFrame, daniel_cols: List[str], skipped_ids: List[str]) -> Dict:
     """
-    Fortschritt basierend auf label.csv:
-
-    - Eine README gilt als "done", wenn mindestens eine Daniel__-Spalte (0 oder 1) gesetzt ist
-      ODER wenn sie in skipped_daniel.csv steht.
+    Eine README gilt als "done", wenn mindestens eine Daniel__-Spalte gesetzt ist
+    (0/1/2/...) ODER wenn sie in skipped_daniel.csv steht.
     """
     if df_plan is None or df_plan.empty:
         return {"total_docs": 0, "done_docs": 0, "done_mask": []}
 
     skipped_set = set(str(s) for s in skipped_ids)
-
     done_mask: List[bool] = []
+
     for _, row in df_plan.iterrows():
         doc_id = str(row["doc_id"])
 
-        # Falls geskippt → fertig
         if doc_id in skipped_set:
             done_mask.append(True)
             continue
 
-        # Fertig, wenn mindestens eine Daniel-Spalte gesetzt ist (0 oder 1)
         any_label = False
         for col in daniel_cols:
             val = row.get(col, None)
             if pd.isna(val):
                 continue
-            # Leere Strings wie "" ignorieren
             if isinstance(val, str) and val.strip() == "":
                 continue
             any_label = True
@@ -395,7 +425,6 @@ def _compute_progress(df_plan: pd.DataFrame, daniel_cols: List[str], skipped_ids
 
     total = len(done_mask)
     done = sum(done_mask)
-
     return {"total_docs": total, "done_docs": done, "done_mask": done_mask}
 
 
@@ -413,15 +442,15 @@ def _find_next_doc_index(df_plan: pd.DataFrame, done_mask: List[bool]) -> int:
 # --------------------------------------------------------------------
 
 def render():
-    st.subheader("🧩 Labeling – Daniel")
+    st.subheader("🧩 Labeling – Daniel (Online)")
 
-    # Session-State-Init (damit labelplan_version & readme_index_version immer existieren)
+    # Session-State-Init
     if "labelplan_version" not in st.session_state:
         st.session_state["labelplan_version"] = 0
     if "readme_index_version" not in st.session_state:
         st.session_state["readme_index_version"] = 0
 
-    # Optional: Button zum manuellen Reload der Kategorien & der Dateiliste & Labelplan
+    # Optionen / Reloads
     with st.expander("⚙️ Optionen", expanded=False):
         col_opt1, col_opt2, col_opt3 = st.columns(3)
 
@@ -439,29 +468,22 @@ def render():
 
         with col_opt3:
             if st.button("🔄 Labelplan von Drive neu laden", key="reload_labelplan_btn_daniel"):
-                # Cache für label.csv invalidieren (falls verfügbar)
                 try:
                     _cached_load_labelplan.clear()
                 except Exception:
                     pass
 
-                # Version erhöhen (Cache-Key) + Session-Kopie resetten
                 st.session_state["labelplan_version"] += 1
 
                 if "df_plan_daniel" in st.session_state:
                     del st.session_state["df_plan_daniel"]
                 st.session_state["df_dirty_daniel"] = False
 
-                st.session_state["daniel_labelplan_last_loaded"] = datetime.now().strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
-
+                st.session_state["daniel_labelplan_last_loaded"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 st.info("Labelplan neu von Google Drive geladen.")
                 st.rerun()
 
-    # ------------------------------------------------
-    # 1) label.csv aus Google Drive holen (gecached)
-    # ------------------------------------------------
+    # 1) label.csv laden
     try:
         plan_file_id = _get_labelplan_file_id()
     except Exception as e:
@@ -469,58 +491,41 @@ def render():
         return
 
     try:
-        df_plan_remote = _cached_load_labelplan(
-            plan_file_id, st.session_state["labelplan_version"]
-        )
+        df_plan_remote = _cached_load_labelplan(plan_file_id, st.session_state["labelplan_version"])
     except Exception as e:
         st.error(f"Labeling-Plan konnte nicht geladen werden: {e}")
         return
 
-    # ------------------------------------------------
-    # 1a) Lokale Session-Kopie initialisieren (Batch-Editing)
-    # ------------------------------------------------
+    # 1a) Session-Kopie initialisieren
     if "df_plan_daniel" not in st.session_state:
         st.session_state["df_plan_daniel"] = df_plan_remote.copy()
         st.session_state["df_dirty_daniel"] = False
-        # Zeitstempel "zuletzt von Drive geladen"
-        st.session_state["daniel_labelplan_last_loaded"] = datetime.now().strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
+        st.session_state["daniel_labelplan_last_loaded"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Ab hier IMMER mit der Session-Kopie arbeiten
     df_plan = st.session_state["df_plan_daniel"]
 
-    # ------------------------------------------------
-    # 2) Daniel-Spalten & Kategorien aus dem Plan bestimmen
-    # ------------------------------------------------
+    # 2) Daniel-Spalten
     daniel_cols = _get_daniel_columns(df_plan)
     if not daniel_cols:
-        st.error(
-            "Im Labeling-Plan wurden keine Spalten vom Typ `Daniel__<Kategorie>` gefunden. "
-            "Bitte prüfe die Spaltennamen in `label.csv`."
-        )
+        st.error("Im Labeling-Plan wurden keine Spalten vom Typ `Daniel__<Kategorie>` gefunden.")
         return
 
-    # Mapping: Kategorie-Name <-> Daniel-Spalte
+    # Mapping cat -> col
     cat_to_col: Dict[str, str] = {}
     for col in daniel_cols:
         cat_name = col.split("Daniel__", 1)[1].lstrip("_")
         cat_to_col[cat_name] = col
 
-    # Kategorien-Konfiguration aus Session-Cache holen (einmal pro Session von Drive)
+    # Kategorien-Konfiguration
     categories_cfg = _get_categories_cached()
 
     categories: List[str] = []
     for cat in cat_to_col.keys():
         if cat not in categories_cfg:
-            # Wenn es die Kategorie im JSON (noch) nicht gibt:
-            # leeres Dict -> keine Keywords, aber trotzdem Kategorie im UI
             categories_cfg[cat] = {}
         categories.append(cat)
 
-    # ------------------------------------------------
-    # 3) Skips laden & Fortschritt berechnen (Skips aus Session-Cache)
-    # ------------------------------------------------
+    # 3) Progress + Skips
     skipped = _get_skipped_ids_cached()
     prog = _compute_progress(df_plan, daniel_cols, skipped)
     if prog["total_docs"] == 0:
@@ -535,23 +540,13 @@ def render():
         ts = st.session_state.get("daniel_labelplan_last_loaded", "unbekannt")
         st.caption(f"Zuletzt von Drive geladen: {ts}")
 
-    # ------------------------------------------------
-    # 4) README-Index (filename -> file_id) aufbauen (gecached)
-    # ------------------------------------------------
-    readme_index = _cached_readme_index(
-        LABEL_CORPUS_DRIVE_FOLDER_ID,
-        st.session_state["readme_index_version"],
-    )
+    # 4) README Index
+    readme_index = _cached_readme_index(LABEL_CORPUS_DRIVE_FOLDER_ID, st.session_state["readme_index_version"])
     if not readme_index:
-        st.error(
-            "Im Korpus-Ordner auf Google Drive wurden keine README-Dateien gefunden. "
-            "Lege die Datensatzbeschreibungen direkt in `label-corpus-v1` ab."
-        )
+        st.error("Im Korpus-Ordner auf Google Drive wurden keine README-Dateien gefunden.")
         return
 
-    # ------------------------------------------------
-    # 5) Aktuelle README bestimmen (Auto + Jump)
-    # ------------------------------------------------
+    # 5) Aktuelles README bestimmen
     manual_idx = st.session_state.get("dl_manual_doc_index", None)
     available_indices = set(df_plan["doc_index"].tolist())
 
@@ -571,10 +566,7 @@ def render():
     if not file_id:
         st.error(
             f"Die Datei `{filename}` wurde im Korpus-Ordner auf Google Drive nicht gefunden.\n\n"
-            "Bitte sicherstellen, dass der Dateiname im Labeling-Plan (Spalte `filename`) "
-            "exakt mit der Datei im Ordner `label-corpus-v1` übereinstimmt.\n\n"
-            "Falls du den Final-Korpus gerade neu nach Google Drive kopiert hast, "
-            "nutze im ⚙️-Menü den Button **„Korpus-Dateiliste neu laden“**."
+            "Nutze in ⚙️ den Button **„Korpus-Dateiliste neu laden“**, falls du gerade Dateien kopiert hast."
         )
         return
 
@@ -584,40 +576,23 @@ def render():
         st.error(f"README `{filename}` konnte nicht von Google Drive geladen werden: {e}")
         return
 
-    # YAML-Frontmatter entfernen und Text „säubern“
+    # Frontmatter entfernen (optional) – und HTML-sicher machen
     text = _strip_frontmatter(raw_text)
-    text = _sanitize_text_for_html(text)
 
-    st.markdown(
-        f"**Aktuelles README:** `{filename}` "
-        f"({current_index+1}/{prog['total_docs']})"
-    )
-    st.caption(
-        f"doc_id: `{doc_id}` – Korpus: `{CORPUS_NAME}` – Plan: `label.csv`"
-    )
+    st.markdown(f"**Aktuelles README:** `{filename}` ({current_index+1}/{prog['total_docs']})")
+    st.caption(f"doc_id: `{doc_id}` – Korpus: `{CORPUS_NAME}` – Plan: `label.csv`")
 
-    # ------------------------------------------------
-    # 6) Keyword-Highlighting + Legende (aus sentence_keywords_positive)
-    # ------------------------------------------------
-    # Farben pro Kategorie (einfaches Set – wird zyklisch genutzt)
+    # 6) Keyword highlighting
     color_palette = [
-        "#ffe58a",  # gelb
-        "#ffcccc",  # rosa
-        "#cce5ff",  # hellblau
-        "#d5f5e3",  # hellgrün
-        "#f9e79f",  # gold
-        "#f5cba7",  # orange
-        "#d7bde2",  # lila
-        "#aed6f1",  # blau
+        "#ffe58a", "#ffcccc", "#cce5ff", "#d5f5e3",
+        "#f9e79f", "#f5cba7", "#d7bde2", "#aed6f1",
     ]
     cat_to_color: Dict[str, str] = {}
     for i, cat in enumerate(categories):
         cat_to_color[cat] = color_palette[i % len(color_palette)]
 
-    # Positive Satz-Keywords pro Kategorie aus categories.json holen
     cat_to_keywords = _collect_positive_keywords_by_category(categories_cfg, categories)
 
-    # Keyword-Color-Paare bauen (für das eigentliche Highlighting)
     kw_color_pairs: List[Dict[str, str]] = []
     for cat, kws in cat_to_keywords.items():
         color = cat_to_color.get(cat, "#ffe58a")
@@ -625,13 +600,8 @@ def render():
             kw_color_pairs.append({"keyword": kw, "color": color})
 
     st.markdown("#### README-Inhalt (mit Keyword-Highlighting)")
+    marked_text = _highlight_keywords_multi(text, kw_color_pairs) if kw_color_pairs else _sanitize_text_for_html(text)
 
-    if kw_color_pairs:
-        marked_text = _highlight_keywords_multi(text, kw_color_pairs)
-    else:
-        marked_text = text
-
-    # 👉 Scrollbarer Kasten mit dem Readme-Inhalt
     st.markdown(
         f"""
         <div style="max-height:500px;overflow-y:auto;padding:0.75rem;
@@ -642,7 +612,7 @@ def render():
         unsafe_allow_html=True,
     )
 
-    # Legende horizontal mit Farben pro Kategorie
+    # Legende
     st.markdown("##### Legende für Highlights")
     max_per_row = 4
     cats = categories
@@ -656,63 +626,59 @@ def render():
                     f"""
                     <div style="display:flex;align-items:center;gap:0.4rem;">
                         <span style="
-                            display:inline-block;
-                            width:14px;
-                            height:14px;
-                            border-radius:3px;
-                            background-color:{color};
-                            border:1px solid #999;
-                        "></span>
+                            display:inline-block;width:14px;height:14px;border-radius:3px;
+                            background-color:{color};border:1px solid #999;"></span>
                         <span>{html.escape(cat)}</span>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
 
-    st.markdown(
-        "_Hinweis: Wörter werden je nach Kategorie verschieden eingefärbt. "
-        "Labels trotzdem immer manuell vergeben._"
-    )
+    st.markdown("_Hinweis: Wörter werden je nach Kategorie verschieden eingefärbt. Labels trotzdem immer manuell vergeben._")
 
-    # ------------------------------------------------
-    # 7) Labeling-UI – direkt auf Basis der Session-Kopie (Daniel-Spalten)
-    # ------------------------------------------------
+    # 7) Labeling UI (A/K/N oder A/N)
     st.markdown("### Labels vergeben")
+
+    with st.expander("ℹ️ Abkürzungen (Labels)", expanded=False):
+        st.markdown(
+            "- **A** = Ausreichend\n"
+            "- **K** = Unklar (nur bei *Data Provenance* und *Data Preparation & Processing*)\n"
+            "- **N** = Unzureichend\n"
+            "- **—** = nicht gesetzt\n\n"
+            "**Speicherwerte (in label.csv):**\n"
+            "- ternär: A=2, K=1, N=0\n"
+            "- binär: A=1, N=0"
+        )
 
     label_widgets: Dict[str, str] = {}
 
-    if len(categories) > 0:
-        cols = st.columns(len(categories))
-    else:
-        cols = []
+    # kompakt wie local: 3 pro Reihe
+    per_row = 3
+    for start in range(0, len(categories), per_row):
+        row_cats = categories[start:start + per_row]
+        cols = st.columns(len(row_cats))
 
-    for cat, col in zip(categories, cols):
-        with col:
-            plan_col = cat_to_col[cat]
-            val = row.get(plan_col, None)
-            existing = None
-            if not pd.isna(val):
-                try:
-                    existing = int(val)
-                except Exception:
-                    existing = None
+        for cat, col in zip(row_cats, cols):
+            with col:
+                plan_col = cat_to_col[cat]
+                existing = row.get(plan_col, None)
 
-            default_val = (
-                ""
-                if existing is None
-                else ("Ja (1)" if existing == 1 else "Nein (0)")
-            )
+                options = _label_options_for_category(cat)
+                default_choice = _format_existing_label_for_ui(cat, existing)
+                if default_choice not in options:
+                    default_choice = "—"
 
-            label_widgets[cat] = st.segmented_control(
-                label=cat,
-                options=["", "Ja (1)", "Nein (0)"],
-                default=default_val,
-                key=f"{doc_id}_{cat}_daniel",
-            )
+                suffix = " (A/K/N)" if _is_ternary_category(cat) else " (A/N)"
+                ui_label = f"{cat}{suffix}"
 
-    # ------------------------------------------------
-    # 8) Speichern oder Überspringen (nur lokal in Session-Kopie)
-    # ------------------------------------------------
+                label_widgets[cat] = st.segmented_control(
+                    label=ui_label,
+                    options=options,
+                    default=default_choice,
+                    key=f"{doc_id}__{cat}__daniel_v2",
+                )
+
+    # 8) Save local + next / skip
     col1, col2 = st.columns(2)
 
     with col1:
@@ -721,19 +687,19 @@ def render():
             if not mask_doc.any():
                 st.error("Aktuelle doc_id wurde im Labelplan nicht gefunden.")
             else:
-                # Nur Daniel__-Spalten in der Session-Kopie aktualisieren
+                any_changed = False
                 for cat in categories:
-                    val = label_widgets.get(cat, "")
+                    choice = label_widgets.get(cat, "—")
+                    parsed = _parse_label_choice(cat, choice)
+                    if parsed is None:
+                        continue  # nicht gesetzt -> nichts ändern
                     plan_col = cat_to_col[cat]
-                    if val == "":
-                        # nichts ändern → bisherigen Wert beibehalten
-                        continue
-                    label_value = 1 if "Ja (1)" in val else 0
-                    df_plan.loc[mask_doc, plan_col] = label_value
+                    df_plan.loc[mask_doc, plan_col] = int(parsed)
+                    any_changed = True
 
-                # Session-Kopie & Dirty-Flag aktualisieren
                 st.session_state["df_plan_daniel"] = df_plan
-                st.session_state["df_dirty_daniel"] = True
+                if any_changed:
+                    st.session_state["df_dirty_daniel"] = True
 
                 if "dl_manual_doc_index" in st.session_state:
                     del st.session_state["dl_manual_doc_index"]
@@ -749,9 +715,7 @@ def render():
             st.info("README übersprungen. Nächstes README wird geladen …")
             st.rerun()
 
-    # ------------------------------------------------
-    # 9) Synchronisation mit Google Drive (Batch-Upload, nur Daniel-Spalten mergen)
-    # ------------------------------------------------
+    # 9) Sync to Drive (nur Daniel-Spalten)
     st.markdown("---")
     st.markdown("### Synchronisation mit Google Drive")
 
@@ -768,60 +732,42 @@ def render():
                 st.warning("Keine lokalen Labels zum Hochladen gefunden.")
             else:
                 try:
-                    # 1) Aktuelle Version von Drive laden
                     df_remote = load_csv_from_drive(plan_file_id)
-
                     if "doc_id" not in df_remote.columns:
                         st.error("In der Labelplan-Datei auf Drive fehlt die Spalte `doc_id`.")
                     else:
-                        # 2) Nur Daniel-Spalten aktualisieren
                         daniel_cols_remote = _get_daniel_columns(df_local)
 
                         df_remote = df_remote.copy()
                         df_remote.set_index("doc_id", inplace=True)
                         df_local_idx = df_local.set_index("doc_id")
 
-                        # Nur die Daniel-Spalten aus der lokalen Kopie übernehmen
+                        # Update nur Daniel-Spalten
                         df_remote.update(df_local_idx[daniel_cols_remote])
-
                         df_remote.reset_index(inplace=True)
 
-                        # 3) Gemergte Version zurück nach Drive schreiben
                         save_csv_to_drive(df_remote, plan_file_id)
 
-                        # 4) Dirty-Flag & Version aktualisieren
                         st.session_state["df_dirty_daniel"] = False
                         st.session_state["labelplan_version"] += 1
-                        st.session_state["daniel_labelplan_last_loaded"] = datetime.now().strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        )
+                        st.session_state["daniel_labelplan_last_loaded"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                        # Optional: Cache leeren, damit direkt frischer Stand gezogen wird
                         try:
                             _cached_load_labelplan.clear()
                         except Exception:
                             pass
 
-                        st.success(
-                            "Daniel-Labels erfolgreich nach Google Drive hochgeladen "
-                            "(nur Daniel-Spalten aktualisiert)."
-                        )
+                        st.success("Daniel-Labels erfolgreich nach Google Drive hochgeladen (nur Daniel-Spalten).")
                         st.rerun()
 
                 except Exception as e:
                     st.error(f"Fehler beim Hochladen nach Drive: {e}")
 
-    # ------------------------------------------------
-    # 10) Jump zu bestimmter README
-    # ------------------------------------------------
+    # 10) Jump
     st.markdown("---")
     st.markdown("### Zu bestimmter README springen")
 
-    doc_options = (
-        df_plan.sort_values("doc_index")[["doc_index", "filename", "doc_id"]]
-        .values
-        .tolist()
-    )
+    doc_options = df_plan.sort_values("doc_index")[["doc_index", "filename", "doc_id"]].values.tolist()
 
     def _format_doc_option(idx: int) -> str:
         row2 = df_plan[df_plan["doc_index"] == idx].iloc[0]
