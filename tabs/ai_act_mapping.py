@@ -314,30 +314,38 @@ def render():
     )
 
     # ------------------------------------------------------------------
-    # 1) Data Provenance (ternär)
+    # 1) Data Provenance (ternär)  <-- NUR HIER ANGEPAST
     # ------------------------------------------------------------------
     with st.expander("1️⃣ Data Provenance (Art. 10(2)(b))", expanded=False):
         st.markdown(
             """
 **Worum geht’s?**  
 Nachvollziehbare **Herkunft/Quelle** der Daten: *Von wem / aus welcher Quelle stammen sie?*  
+Wichtig: Es geht **nicht** nur darum, dass ein anderer Datensatzname erwähnt wird (z. B. *„based on the EDALT dataset“*),  
+sondern darum, dass die **Quelle/Herkunft** so beschrieben ist, dass man versteht, **woher** die Daten tatsächlich kommen  
+(und idealerweise auch, wie man die Quelle findet).  
 Bei abgeleiteten Datensätzen (Derived Datasets) zählt in eurer Logik insbesondere der **direkte Vorgänger-Datensatz** als Provenance-Stufe davor.
 
 **✅ Ausreichend**  
-- Die Herkunft/Quelle ist **explizit** genannt (Urheberschaft erkennbar).
+- Die Herkunft/Quelle ist **explizit** genannt und die **Urheberschaft erkennbar** (wer hat die Daten erzeugt/erhoben/gesammelt?).  
 - Eigene Urheberschaft wird klar benannt (*„wir haben … gesammelt/gescraped/erhoben“*).
 
 **❓ Unklar**  
 - Herkunft ist **angedeutet**, aber ohne Kontext nicht zweifelsfrei.  
-  Beispiele: *„scraped from Wikipedia“* (kann heißen: Anbieter hat’s gescraped, oder nur weiterverwendet),  
-  *„sensor data“* (welcher Sensor / wer hat erhoben?).
+- Dazu zählt auch: Es wird **nur ein Link** genannt (z. B. zu einem Repository), ohne im Text klar zu machen, **was** dort genau die Quelle ist  
+  bzw. ohne eindeutige Provenance-Aussage (Link allein ist nicht automatisch „explizite Herkunft“).
 
 **❌ Unzureichend**  
-- **Keine** Angabe zur Herkunft/Quelle.
+- **Keine** Angabe zur Herkunft/Quelle.  
+- Oder es steht **nur der Name** eines (bekannten) Datensatzes, auf den Bezug genommen wird (z. B. *„EDALT dataset“*),  
+  ohne dass klar wird, **woher** dieser stammt bzw. wie man ihn konkret findet/zuordnet.
 
 **Mini-Beispiele**  
 - ✅ *„We scraped Wikipedia pages between 2022–2023 …“*  
+- ✅ *„Data was collected by our lab at … (institution) …“*  
 - ❓ *„Wikipedia dataset“* / *„Sensor logs“* (ohne Betreiber/Setup)  
+- ❓ *„See repository: <link>“* (nur Link, keine klare Provenance-Aussage)  
+- ❌ *„Based on the EDALT dataset“* (nur Name, keine Quelle/Herkunft)  
 - ❌ README ohne Herkunftsangaben
 """
         )
