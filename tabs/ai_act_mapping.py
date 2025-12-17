@@ -1,11 +1,22 @@
-# tabs/tab_ai_act_mapping.py
+# tabs/tab_ai_act_mapping.py  (ONLINE / Streamlit Cloud Variante – basiert auf deinem lokalen Code)
 
 import streamlit as st
 import graphviz
 import pandas as pd
 from pathlib import Path
 
-DATA_DIR = Path("data")
+
+# ----------------------------------------------------
+# Storage (ONLINE)
+# ----------------------------------------------------
+# Streamlit Cloud: nutze persistentes Volume, falls vorhanden.
+# Fallback: lokales Projektverzeichnis.
+try:
+    _BASE_DIR = Path(st.secrets.get("STORAGE_DIR", "."))
+except Exception:
+    _BASE_DIR = Path(".")
+
+DATA_DIR = _BASE_DIR / "data"
 MAPPING_FILE = DATA_DIR / "ai_act_mapping.csv"
 
 
@@ -21,7 +32,7 @@ def default_mapping_df() -> pd.DataFrame:
     """
     Default-Schema: EXACTLY ONE ROW PER CATEGORY (für Mindmap: 1 Pfeil pro Kategorie)
 
-    Kategorien (lokal, v2):
+    Kategorien (online, v2):
       1) Data Provenance
       2) Data Composition
       3) Obtained From
@@ -254,7 +265,7 @@ def build_graph_from_df(df: pd.DataFrame) -> graphviz.Digraph:
 # ----------------------------------------------------
 
 def render():
-    st.subheader("📚 AI Act Mapping – Transparenzanforderungen")
+    st.subheader("📚 AI Act Mapping – Transparenzanforderungen (Online)")
 
     st.write(
         """
@@ -264,7 +275,7 @@ def render():
         **Visualisierung:**
         *AI Act → Kategorie → 1 kurzer Detail-Kasten*
 
-        Kategorien (lokal, v2):
+        Kategorien (online, v2):
         1. **Data Provenance**
         2. **Data Composition**
         3. **Obtained From**
@@ -298,10 +309,10 @@ def render():
         df,
         num_rows="fixed",
         use_container_width=True,
-        key="ai_act_mapping_editor_one_row_per_cat",
+        key="ai_act_mapping_editor_one_row_per_cat_online",
     )
 
-    if st.button("💾 Speichern & Mindmap aktualisieren"):
+    if st.button("💾 Speichern & Mindmap aktualisieren", key="ai_act_mapping_save_online"):
         save_mapping_df(edited_df)
         st.success("Mapping gespeichert – Mindmap wird aktualisiert.")
 
@@ -321,32 +332,42 @@ def render():
         "Die Icons entsprechen dem Selector in den Labeling-Tabs."
     )
 
+    # ✅ NUR DIESER EXPANDER IST ANGEPASST (Data Provenance wie von dir beschrieben)
     with st.expander("1️⃣ Data Provenance (Art. 10(2)(b))", expanded=False):
         st.markdown(
             """
 **Worum geht’s?**  
 Nachvollziehbare **Herkunft/Quelle** der Daten: *Von wem / aus welcher Quelle stammen sie?*  
+Wichtig: Es reicht **nicht**, einfach nur einen Datensatz **zu nennen** (z. B. *„based on the EDALT dataset“*).  
+Auch ein berühmter Datensatz hat wiederum eine **eigene Quelle** – und genau diese Herkunft/Urheberschaft muss erkennbar sein.  
 Bei abgeleiteten Datensätzen (Derived Datasets) zählt in eurer Logik insbesondere der **direkte Vorgänger-Datensatz** als Provenance-Stufe davor.
 
 **✅ Ausreichend**  
-- Die Herkunft/Quelle ist **explizit** genannt (Urheberschaft erkennbar).
+- Die Herkunft/Quelle ist **explizit** genannt und die **Urheberschaft erkennbar** (wer hat die Daten erzeugt/erhoben/gesammelt?).  
 - Eigene Urheberschaft wird klar benannt (*„wir haben … gesammelt/gescraped/erhoben“*).
 
 **❓ Unklar**  
 - Herkunft ist **angedeutet**, aber ohne Kontext nicht zweifelsfrei.  
-  Beispiele: *„scraped from Wikipedia“* (kann heißen: Anbieter hat’s gescraped, oder nur weiterverwendet),  
-  *„sensor data“* (welcher Sensor / wer hat erhoben?).
+  Beispiele: *„scraped from Wikipedia“*, *„sensor data“* (wer/wo/wie genau?).  
+- Dazu zählt auch: Es wird **nur ein Link** genannt (z. B. zu einem Repository), ohne im Text klar zu machen, **was** dort genau die Quelle ist  
+  bzw. ohne eindeutige Provenance-Aussage (Link allein ist nicht automatisch „explizite Herkunft“).
 
 **❌ Unzureichend**  
-- **Keine** Angabe zur Herkunft/Quelle.
+- **Keine** Angabe zur Herkunft/Quelle.  
+- Oder es steht **nur der Name** eines Datensatzes, auf den Bezug genommen wird (z. B. *„EDALT dataset“*),  
+  aber man weiß danach immer noch nicht **woher** die Daten kommen oder **wie** man sie konkret findet/zuordnet.
 
 **Mini-Beispiele**  
 - ✅ *„We scraped Wikipedia pages between 2022–2023 …“*  
+- ✅ *„Data was collected by our lab at … (institution) …“*  
 - ❓ *„Wikipedia dataset“* / *„Sensor logs“* (ohne Betreiber/Setup)  
+- ❓ *„See repository: <link>“* (nur Link, keine klare Provenance-Aussage)  
+- ❌ *„Based on the EDALT dataset“* (nur Name, keine Quelle/Herkunft)  
 - ❌ README ohne Herkunftsangaben
 """
         )
 
+    # باقي Expander bleiben inhaltlich wie gehabt
     with st.expander("2️⃣ Data Composition (Art. 10(2))", expanded=False):
         st.markdown(
             """
