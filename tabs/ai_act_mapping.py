@@ -1,22 +1,11 @@
-# tabs/tab_ai_act_mapping.py  (ONLINE / Streamlit Cloud Variante)
+# tabs/tab_ai_act_mapping.py
 
 import streamlit as st
 import graphviz
 import pandas as pd
 from pathlib import Path
 
-
-# ----------------------------------------------------
-# Storage (ONLINE)
-# ----------------------------------------------------
-# Streamlit Cloud: nutze persistentes Volume, falls vorhanden.
-# Fallback: lokales Projektverzeichnis.
-try:
-    _BASE_DIR = Path(st.secrets.get("STORAGE_DIR", "."))
-except Exception:
-    _BASE_DIR = Path(".")
-
-DATA_DIR = _BASE_DIR / "data"
+DATA_DIR = Path("data")
 MAPPING_FILE = DATA_DIR / "ai_act_mapping.csv"
 
 
@@ -32,7 +21,7 @@ def default_mapping_df() -> pd.DataFrame:
     """
     Default-Schema: EXACTLY ONE ROW PER CATEGORY (für Mindmap: 1 Pfeil pro Kategorie)
 
-    Kategorien (online, v2):
+    Kategorien (lokal, v2):
       1) Data Provenance
       2) Data Composition
       3) Obtained From
@@ -120,18 +109,22 @@ def load_mapping_df() -> pd.DataFrame:
     for col in ["pillar", "category", "detail"]:
         df[col] = df[col].fillna("").astype(str).str.strip()
 
+    # Check: sind alle benötigten Kategorien vorhanden?
     present = set(df["category"].dropna().unique().tolist())
     if not set(wanted_cats).issubset(present):
         df = default_mapping_df()
         df.to_csv(MAPPING_FILE, index=False)
         return df
 
-    # REDUKTION: genau 1 Zeile pro Kategorie
+    # REDUKTION: genau 1 Zeile pro Kategorie (erste sinnvolle Zeile gewinnt)
     reduced_rows = []
     for cat in wanted_cats:
         sub = df[df["category"] == cat].copy()
+
+        # Priorität: Zeilen mit Detail > 0 Zeichen, sonst irgendwas
         sub_non_empty = sub[sub["detail"].astype(str).str.len() > 0]
         pick = sub_non_empty.iloc[0] if not sub_non_empty.empty else sub.iloc[0]
+
         reduced_rows.append(
             {
                 "pillar": pick.get("pillar", "").strip(),
@@ -141,6 +134,8 @@ def load_mapping_df() -> pd.DataFrame:
         )
 
     df_reduced = pd.DataFrame(reduced_rows, columns=["pillar", "category", "detail"])
+
+    # Datei aktualisieren (damit Mindmap künftig stabil 1 Pfeil/Kategorie ist)
     df_reduced.to_csv(MAPPING_FILE, index=False)
     return df_reduced
 
@@ -167,14 +162,17 @@ def save_mapping_df(df: pd.DataFrame):
             cleaned[col] = ""
         cleaned[col] = cleaned[col].fillna("").astype(str).str.strip()
 
+    # nur Zeilen, die mindestens category haben
     cleaned = cleaned[cleaned["category"].astype(str).str.len() > 0]
 
+    # genau 1 Zeile pro wanted category, in fester Reihenfolge
     reduced_rows = []
-    defaults = default_mapping_df()
     for cat in wanted_cats:
         sub = cleaned[cleaned["category"] == cat]
         if sub.empty:
-            d = defaults[defaults["category"] == cat].iloc[0].to_dict()
+            # falls Nutzer Kategorie gelöscht hat -> Default-Zeile wieder herstellen
+            default_row = default_mapping_df()
+            d = default_row[default_row["category"] == cat].iloc[0].to_dict()
             reduced_rows.append(d)
             continue
 
@@ -222,18 +220,22 @@ def build_graph_from_df(df: pd.DataFrame) -> graphviz.Digraph:
     if df_clean.empty:
         return dot
 
+    # 1) Kategorie-Knoten
     category_nodes = {}
     for _, row in df_clean.iterrows():
         cat = row["category"]
         pil = row["pillar"]
-        if not cat or cat in category_nodes:
+        if not cat:
             continue
+        if cat in category_nodes:
+            continue  # Sicherheit: keine Duplikate im Graph
         c_id = new_id()
         suffix = f"\n({pil})" if pil else ""
         dot.node(c_id, f"{cat}{suffix}")
         dot.edge(root_id, c_id)
         category_nodes[cat] = c_id
 
+    # 2) Genau EIN Detail-Knoten pro Kategorie
     for _, row in df_clean.iterrows():
         cat = row["category"]
         detail = row["detail"]
@@ -252,7 +254,7 @@ def build_graph_from_df(df: pd.DataFrame) -> graphviz.Digraph:
 # ----------------------------------------------------
 
 def render():
-    st.subheader("📚 AI Act Mapping – Transparenzanforderungen (Online)")
+    st.subheader("📚 AI Act Mapping – Transparenzanforderungen")
 
     st.write(
         """
@@ -262,7 +264,7 @@ def render():
         **Visualisierung:**
         *AI Act → Kategorie → 1 kurzer Detail-Kasten*
 
-        Kategorien (online, v2):
+        Kategorien (lokal, v2):
         1. **Data Provenance**
         2. **Data Composition**
         3. **Obtained From**
@@ -272,8 +274,10 @@ def render():
         """
     )
 
+    # 1) Mapping laden (inkl. Reduktion auf 1 Row/Kategorie)
     df = load_mapping_df()
 
+    # 2) Mindmap anzeigen
     st.markdown("### 🌳 Aktuelle AI Act Mindmap (1 Detail pro Kategorie)")
     try:
         dot = build_graph_from_df(df)
@@ -283,6 +287,7 @@ def render():
 
     st.markdown("---")
 
+    # 3) Editor: exakt 6 Zeilen (1 pro Kategorie) anzeigen/bearbeiten
     st.markdown("### ✏️ AI Act Mapping Tabelle bearbeiten (1 Zeile pro Kategorie)")
     st.caption(
         "Hier bearbeitest du pro Kategorie genau **eine** kurze Erklärung (Detail). "
@@ -293,66 +298,55 @@ def render():
         df,
         num_rows="fixed",
         use_container_width=True,
-        key="ai_act_mapping_editor_one_row_per_cat_online",
+        key="ai_act_mapping_editor_one_row_per_cat",
     )
 
-    if st.button("💾 Speichern & Mindmap aktualisieren", key="ai_act_mapping_save_online"):
+    if st.button("💾 Speichern & Mindmap aktualisieren"):
         save_mapping_df(edited_df)
         st.success("Mapping gespeichert – Mindmap wird aktualisiert.")
+
         if hasattr(st, "rerun"):
             st.rerun()
         elif hasattr(st, "experimental_rerun"):
             st.experimental_rerun()
 
     st.markdown("---")
+
+    # 4) Kategorie-Guide (ausführlicher, wie im Online-Tab)
     st.markdown("### 📖 Kategorie-Guide für Labeling (ausführlicher)")
 
     st.caption(
         "Ziel: Die folgenden Hinweise erklären **was** die Kategorie abdeckt, **wie** die Labels zu vergeben sind "
         "(✅ ausreichend / ❓ unklar / ❌ unzureichend) und geben **Mini-Beispiele**. "
-        "Die Icons entsprechen exakt dem Selector in den Labeling-Tabs."
+        "Die Icons entsprechen dem Selector in den Labeling-Tabs."
     )
 
-    # ------------------------------------------------------------------
-    # 1) Data Provenance (ternär)  <-- NUR HIER ANGEPAST
-    # ------------------------------------------------------------------
     with st.expander("1️⃣ Data Provenance (Art. 10(2)(b))", expanded=False):
         st.markdown(
             """
 **Worum geht’s?**  
 Nachvollziehbare **Herkunft/Quelle** der Daten: *Von wem / aus welcher Quelle stammen sie?*  
-Wichtig: Es geht **nicht** nur darum, dass ein anderer Datensatzname erwähnt wird (z. B. *„based on the EDALT dataset“*),  
-sondern darum, dass die **Quelle/Herkunft** so beschrieben ist, dass man versteht, **woher** die Daten tatsächlich kommen  
-(und idealerweise auch, wie man die Quelle findet).  
 Bei abgeleiteten Datensätzen (Derived Datasets) zählt in eurer Logik insbesondere der **direkte Vorgänger-Datensatz** als Provenance-Stufe davor.
 
 **✅ Ausreichend**  
-- Die Herkunft/Quelle ist **explizit** genannt und die **Urheberschaft erkennbar** (wer hat die Daten erzeugt/erhoben/gesammelt?).  
+- Die Herkunft/Quelle ist **explizit** genannt (Urheberschaft erkennbar).
 - Eigene Urheberschaft wird klar benannt (*„wir haben … gesammelt/gescraped/erhoben“*).
 
 **❓ Unklar**  
 - Herkunft ist **angedeutet**, aber ohne Kontext nicht zweifelsfrei.  
-- Dazu zählt auch: Es wird **nur ein Link** genannt (z. B. zu einem Repository), ohne im Text klar zu machen, **was** dort genau die Quelle ist  
-  bzw. ohne eindeutige Provenance-Aussage (Link allein ist nicht automatisch „explizite Herkunft“).
+  Beispiele: *„scraped from Wikipedia“* (kann heißen: Anbieter hat’s gescraped, oder nur weiterverwendet),  
+  *„sensor data“* (welcher Sensor / wer hat erhoben?).
 
 **❌ Unzureichend**  
-- **Keine** Angabe zur Herkunft/Quelle.  
-- Oder es steht **nur der Name** eines (bekannten) Datensatzes, auf den Bezug genommen wird (z. B. *„EDALT dataset“*),  
-  ohne dass klar wird, **woher** dieser stammt bzw. wie man ihn konkret findet/zuordnet.
+- **Keine** Angabe zur Herkunft/Quelle.
 
 **Mini-Beispiele**  
 - ✅ *„We scraped Wikipedia pages between 2022–2023 …“*  
-- ✅ *„Data was collected by our lab at … (institution) …“*  
 - ❓ *„Wikipedia dataset“* / *„Sensor logs“* (ohne Betreiber/Setup)  
-- ❓ *„See repository: <link>“* (nur Link, keine klare Provenance-Aussage)  
-- ❌ *„Based on the EDALT dataset“* (nur Name, keine Quelle/Herkunft)  
 - ❌ README ohne Herkunftsangaben
 """
         )
 
-    # ------------------------------------------------------------------
-    # 2) Data Composition (binär)
-    # ------------------------------------------------------------------
     with st.expander("2️⃣ Data Composition (Art. 10(2))", expanded=False):
         st.markdown(
             """
@@ -373,9 +367,6 @@ Sind es **Real-world** Daten, **Synthetic** Daten, oder **selbst erhobene** Date
 """
         )
 
-    # ------------------------------------------------------------------
-    # 3) Obtained From (binär)
-    # ------------------------------------------------------------------
     with st.expander("3️⃣ Obtained From (Annex IV 2(d) – „obtained and selected“)", expanded=False):
         st.markdown(
             """
@@ -397,9 +388,6 @@ Das ist nahe an Provenance, aber mit Fokus auf den **Beschaffungs-/Erhebungsweg*
 """
         )
 
-    # ------------------------------------------------------------------
-    # 4) Data Preparation and Processing (ternär)
-    # ------------------------------------------------------------------
     with st.expander("4️⃣ Data Preparation and Processing (Art. 10(2)(c))", expanded=False):
         st.markdown(
             """
@@ -426,9 +414,6 @@ Wichtig ist nicht nur „dass“ etwas gemacht wurde, sondern **wie** – und **
 """
         )
 
-    # ------------------------------------------------------------------
-    # 5) Bias and Fairness Disclosure (binär)
-    # ------------------------------------------------------------------
     with st.expander("5️⃣ Bias and Fairness Disclosure (Art. 10(2)(f)(g))", expanded=False):
         st.markdown(
             """
@@ -449,9 +434,6 @@ Angaben zu **Bias**, **Fairness**, **Repräsentativität** und bekannten Verzerr
 """
         )
 
-    # ------------------------------------------------------------------
-    # 6) Annahmen über den Datensatz (binär)
-    # ------------------------------------------------------------------
     with st.expander("6️⃣ Annahmen über den Datensatz (Art. 10(2)(d))", expanded=False):
         st.markdown(
             """
