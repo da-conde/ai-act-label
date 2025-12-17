@@ -305,42 +305,164 @@ def render():
             st.experimental_rerun()
 
     st.markdown("---")
-    st.markdown("### 📖 Kleine AI-Act-Auszüge (ausführlicher)")
+    st.markdown("### 📖 Kategorie-Guide für Labeling (ausführlicher)")
 
-    with st.expander("1️⃣ Data Provenance", expanded=False):
-        st.write(
-            "- **Art. 10(2)(b)**: Nachvollziehbarkeit der Datenbasis (Herkunft/Quelle).\n"
-            "- In eurer Logik zählt bei Derived Datasets der **direkte Vorgänger-Datensatz** als Provenance-Stufe davor."
+    st.caption(
+        "Ziel: Die folgenden Hinweise erklären **was** die Kategorie abdeckt, **wie** die Labels zu vergeben sind "
+        "(✅ ausreichend / ❓ unklar / ❌ unzureichend) und geben **Mini-Beispiele**. "
+        "Die Icons entsprechen exakt dem Selector in den Labeling-Tabs."
+    )
+
+    # ------------------------------------------------------------------
+    # 1) Data Provenance (ternär)
+    # ------------------------------------------------------------------
+    with st.expander("1️⃣ Data Provenance (Art. 10(2)(b))", expanded=False):
+        st.markdown(
+            """
+**Worum geht’s?**  
+Nachvollziehbare **Herkunft/Quelle** der Daten: *Von wem / aus welcher Quelle stammen sie?*  
+Bei abgeleiteten Datensätzen (Derived Datasets) zählt in eurer Logik insbesondere der **direkte Vorgänger-Datensatz** als Provenance-Stufe davor.
+
+**✅ Ausreichend**  
+- Die Herkunft/Quelle ist **explizit** genannt (Urheberschaft erkennbar).
+- Eigene Urheberschaft wird klar benannt (*„wir haben … gesammelt/gescraped/erhoben“*).
+
+**❓ Unklar**  
+- Herkunft ist **angedeutet**, aber ohne Kontext nicht zweifelsfrei.  
+  Beispiele: *„scraped from Wikipedia“* (kann heißen: Anbieter hat’s gescraped, oder nur weiterverwendet),  
+  *„sensor data“* (welcher Sensor / wer hat erhoben?).
+
+**❌ Unzureichend**  
+- **Keine** Angabe zur Herkunft/Quelle.
+
+**Mini-Beispiele**  
+- ✅ *„We scraped Wikipedia pages between 2022–2023 …“*  
+- ❓ *„Wikipedia dataset“* / *„Sensor logs“* (ohne Betreiber/Setup)  
+- ❌ README ohne Herkunftsangaben
+"""
         )
 
-    with st.expander("2️⃣ Data Composition", expanded=False):
-        st.write(
-            "- Art. 10 knüpft Datenqualität an den Zweck.\n"
-            "- Dafür braucht es Klarheit über **real-world vs. synthetic** (oder selbst erhoben)."
+    # ------------------------------------------------------------------
+    # 2) Data Composition (binär)
+    # ------------------------------------------------------------------
+    with st.expander("2️⃣ Data Composition (Art. 10(2))", expanded=False):
+        st.markdown(
+            """
+**Worum geht’s?**  
+Klarheit über den **Typ / die Zusammensetzung** der Daten – besonders wichtig für Datenqualität im Sinne von Art. 10:  
+Sind es **Real-world** Daten, **Synthetic** Daten, oder **selbst erhobene** Daten?
+
+**✅ Ausreichend**  
+- Explizite Benennung wie: *„real-world“*, *„synthetic“* oder *„collected by us“ / „self-collected“*.
+
+**❌ Unzureichend**  
+- Keine (oder nur implizite) Information, ob real/synthetisch/selbst erhoben.
+
+**Mini-Beispiele**  
+- ✅ *„This dataset contains synthetic tabular records generated with …“*  
+- ✅ *„We collected the data via surveys …“*  
+- ❌ Nur technische Specs, aber kein Hinweis auf real vs. synthetic
+"""
         )
 
-    with st.expander("3️⃣ Obtained From", expanded=False):
-        st.write(
-            "- **Annex IV 2(d)**: Daten müssen als „**obtained and selected**“ dokumentiert sein.\n"
-            "- Operationalisierung: **Wie** wurden Daten bezogen/erhoben/selektiert (Scraping, Sensor, API, Sampling)."
+    # ------------------------------------------------------------------
+    # 3) Obtained From (binär)
+    # ------------------------------------------------------------------
+    with st.expander("3️⃣ Obtained From (Annex IV 2(d) – „obtained and selected“)", expanded=False):
+        st.markdown(
+            """
+**Worum geht’s?**  
+**Wie** wurden die Daten **bezogen/erhoben/selektiert**? (Mechanismus/Quelle des Bezugs)  
+Das ist nahe an Provenance, aber mit Fokus auf den **Beschaffungs-/Erhebungsweg** (Scraping, API, Sensor, Sampling, …).
+
+**✅ Ausreichend**  
+- Es wird benannt, **wie** die Daten bezogen wurden.  
+  Beispiele: *„scraped from …“*, *„collected via API“*, *„measured with sensor …“*, *„sampled from …“*.
+
+**❌ Unzureichend**  
+- Keine Angabe zum Erhebungs-/Bezugsweg.
+
+**Mini-Beispiele**  
+- ✅ *„Collected via Twitter API (v2) using keywords …“*  
+- ✅ *„Scraped from Wikipedia using …“*  
+- ❌ *„Data from the web“* (zu vage, kein Mechanismus)
+"""
         )
 
-    with st.expander("4️⃣ Data Preparation and Processing", expanded=False):
-        st.write(
-            "- **Art. 10(2)(c)**: Verarbeitungsschritte ab Rohdaten.\n"
-            "- Erwartet: **was** gemacht wurde (oder explizit: nichts) und ggf. Abweichung vom Ausgangsdatensatz."
+    # ------------------------------------------------------------------
+    # 4) Data Preparation and Processing (ternär)
+    # ------------------------------------------------------------------
+    with st.expander("4️⃣ Data Preparation and Processing (Art. 10(2)(c))", expanded=False):
+        st.markdown(
+            """
+**Worum geht’s?**  
+Alle **Verarbeitungsschritte ab Existenz der Rohdaten**: Cleaning, Filtering, Normalisierung, Deduplication, Labeling, etc.  
+Wichtig ist nicht nur „dass“ etwas gemacht wurde, sondern **wie** – und **wie sich der resultierende Datensatz** vom Ausgangsdatensatz unterscheidet.
+
+**✅ Ausreichend**  
+- Konkrete Beschreibung der Verarbeitung **und/oder** der resultierenden Unterschiede zum Ausgangsdatensatz.  
+- Oder explizit: *„no preprocessing was applied“*.
+
+**❓ Unklar**  
+- Verarbeitung wird nur als Schlagwort genannt, ohne Qualifizierung/Methode/Konfiguration.  
+  Beispiel: *„outlier treatment“* ohne Methode (z. B. Tukey fences) und ohne Parameter.
+
+**❌ Unzureichend**  
+- Keine Angabe.
+
+**Mini-Beispiele**  
+- ✅ *„We removed duplicates by hashing rows; dropped records with missing target; normalized features with z-score …“*  
+- ✅ *„No preprocessing was performed.“*  
+- ❓ *„Data was cleaned and outliers were treated.“*  
+- ❌ Keine Processing-Infos
+"""
         )
 
-    with st.expander("5️⃣ Bias and Fairness Disclosure", expanded=False):
-        st.write(
-            "- **Art. 10(2)(f)(g)**: Risiko systematischer Verzerrungen.\n"
-            "- Operationalisierung: Bias/Fairness/Representativität + ggf. Analysen."
+    # ------------------------------------------------------------------
+    # 5) Bias and Fairness Disclosure (binär)
+    # ------------------------------------------------------------------
+    with st.expander("5️⃣ Bias and Fairness Disclosure (Art. 10(2)(f)(g))", expanded=False):
+        st.markdown(
+            """
+**Worum geht’s?**  
+Angaben zu **Bias**, **Fairness**, **Repräsentativität** und bekannten Verzerrungsrisiken – oder Hinweise auf entsprechende Analysen.
+
+**✅ Ausreichend**  
+- Benennung von Bias-/Fairness-relevanten Informationen (z. B. bekannte Verzerrungen, Unterrepräsentation, Sampling-Bias)  
+  und/oder kurze Ergebnisse/Checks.
+
+**❌ Unzureichend**  
+- Keine Angabe (keine Hinweise auf Bias/Fairness/Representativität).
+
+**Mini-Beispiele**  
+- ✅ *„The dataset underrepresents age group 65+; results may not generalize.“*  
+- ✅ *„We checked class imbalance and report distribution by gender/region …“*  
+- ❌ Keine Bias-/Fairness-Infos
+"""
         )
 
-    with st.expander("6️⃣ Annahmen über den Datensatz", expanded=False):
-        st.write(
-            "- **Art. 10(2)(d)** (eure Zuordnung): Sachebene & Kontext.\n"
-            "- Operationalisierung: Was stellen die Daten dar / Ziel / intended use (nicht nur technische Specs)."
+    # ------------------------------------------------------------------
+    # 6) Annahmen über den Datensatz (binär)
+    # ------------------------------------------------------------------
+    with st.expander("6️⃣ Annahmen über den Datensatz (Art. 10(2)(d))", expanded=False):
+        st.markdown(
+            """
+**Worum geht’s?**  
+Beschreibung auf **Sachebene & Kontext**: *Was stellen die Daten dar? Was sollen sie messen/abbilden?*  
+Das ist mehr als technische Spezifikationen – es geht um „meaning“ / intended measurement / intended use.
+
+**✅ Ausreichend**  
+- Es ist erklärt, welche Informationen in den Daten stecken bzw. was sie darstellen oder messen sollen  
+  (Problem-/Domänenbezug, Ziel, Kontext, intended use).
+
+**❌ Unzureichend**  
+- Keine Angabe (z. B. leere README oder nur technische Specs ohne Bedeutung/ Kontext).
+
+**Mini-Beispiele**  
+- ✅ *„Each record represents a hospital visit; label indicates 30-day readmission risk …“*  
+- ✅ *„Sensor measures vibration of machine X; goal is predictive maintenance …“*  
+- ❌ *„Columns: col1, col2 … dtype …“* ohne Kontext
+"""
         )
 
 

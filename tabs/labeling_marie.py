@@ -179,7 +179,7 @@ def _sanitize_text_for_html(text: str) -> str:
 
 
 # --------------------------------------------------------------------
-# Label-Optionen (2 oder 3 Ausprägungen)
+# Label-Optionen (2 oder 3 Ausprägungen) – mit Icons ✅ ❓ ❌
 # --------------------------------------------------------------------
 
 def _normalize_cat_name(cat: str) -> str:
@@ -207,44 +207,34 @@ def _is_ternary_category(category_name: str) -> bool:
 
 def _label_options_for_category(category_name: str) -> List[str]:
     if _is_ternary_category(category_name):
-        return ["—", "A", "K", "N"]  # Ausreichend, Unklar, Unzureichend
-    return ["—", "A", "N"]          # Ausreichend, Unzureichend
+        return ["—", "✅", "❓", "❌"]  # A, K, N
+    return ["—", "✅", "❌"]          # A, N
 
 
 def _parse_label_choice(category_name: str, choice: str):
     """
     Rückgabe:
-      - ternär: A=2, K=1, N=0
-      - binär: A=1, N=0
+      - ternär: ✅=2, ❓=1, ❌=0
+      - binär: ✅=1, ❌=0
       - None wenn nicht gesetzt
     """
     if not choice or str(choice).strip() in ("", "—"):
         return None
 
-    c = str(choice).strip().upper()
+    c = str(choice).strip()
     ternary = _is_ternary_category(category_name)
 
     if ternary:
-        if c == "A":
-            return 2
-        if c == "K":
-            return 1
-        if c == "N":
-            return 0
-        return None
+        return {"✅": 2, "❓": 1, "❌": 0}.get(c, None)
 
-    if c == "A":
-        return 1
-    if c == "N":
-        return 0
-    return None
+    return {"✅": 1, "❌": 0}.get(c, None)
 
 
 def _format_existing_label_for_ui(category_name: str, existing_val) -> str:
     """
     Wandelt gespeicherten Labelwert zurück in UI-Default:
-      - ternär: 2→A, 1→K, 0→N
-      - binär: 1→A, 0→N
+      - ternär: 2→✅, 1→❓, 0→❌
+      - binär: 1→✅, 0→❌
       - sonst → —
     """
     if existing_val is None or (isinstance(existing_val, float) and pd.isna(existing_val)):
@@ -255,19 +245,9 @@ def _format_existing_label_for_ui(category_name: str, existing_val) -> str:
         return "—"
 
     if _is_ternary_category(category_name):
-        if v == 2:
-            return "A"
-        if v == 1:
-            return "K"
-        if v == 0:
-            return "N"
-        return "—"
+        return {2: "✅", 1: "❓", 0: "❌"}.get(v, "—")
 
-    if v == 1:
-        return "A"
-    if v == 0:
-        return "N"
-    return "—"
+    return {1: "✅", 0: "❌"}.get(v, "—")
 
 
 # --------------------------------------------------------------------
@@ -631,18 +611,18 @@ def render():
 
     st.markdown("_Hinweis: Wörter werden je nach Kategorie verschieden eingefärbt. Labels trotzdem immer manuell vergeben._")
 
-    # 7) Labeling UI (A/K/N oder A/N)
+    # 7) Labeling UI (✅/❓/❌ oder ✅/❌) – Icons nicht im Titel
     st.markdown("### Labels vergeben")
 
     with st.expander("ℹ️ Abkürzungen (Labels)", expanded=False):
         st.markdown(
-            "- **A** = Ausreichend\n"
-            "- **K** = Unklar (nur bei *Data Provenance* und *Data Preparation & Processing*)\n"
-            "- **N** = Unzureichend\n"
+            "- **✅** = Ausreichend\n"
+            "- **❓** = Unklar (nur bei *Data Provenance* und *Data Preparation & Processing*)\n"
+            "- **❌** = Unzureichend\n"
             "- **—** = nicht gesetzt\n\n"
             "**Speicherwerte (in label.csv):**\n"
-            "- ternär: A=2, K=1, N=0\n"
-            "- binär: A=1, N=0"
+            "- ternär: ✅=2, ❓=1, ❌=0\n"
+            "- binär: ✅=1, ❌=0"
         )
 
     label_widgets: Dict[str, str] = {}
@@ -662,8 +642,7 @@ def render():
                 if default_choice not in options:
                     default_choice = "—"
 
-                suffix = " (A/K/N)" if _is_ternary_category(cat) else " (A/N)"
-                ui_label = f"{cat}{suffix}"
+                ui_label = f"{cat}"
 
                 label_widgets[cat] = st.segmented_control(
                     label=ui_label,
