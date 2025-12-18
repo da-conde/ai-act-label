@@ -181,6 +181,152 @@ def _sanitize_text_for_html(text: str) -> str:
 
 
 # --------------------------------------------------------------------
+# HTML-README: Erkennen, Decoden, Sanitizen, Rendern (ONLINE)
+# --------------------------------------------------------------------
+
+_ALLOWED_TAGS = {
+    "p", "br", "strong", "em", "b", "i", "u",
+    "a", "ul", "ol", "li",
+    "code", "pre", "blockquote",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "table", "thead", "tbody", "tr", "td", "th",
+    "sup", "sub",
+}
+
+
+def _looks_like_html(text: str) -> bool:
+    """
+    Heuristik: True wenn der Text vermutlich HTML enthält (oder HTML-escaped Tags).
+    """
+    if not text:
+        return False
+    t = text.strip()
+
+    # echte HTML-Tags
+    if re.search(r"(?i)<\s*(p|div|span|br|a|strong|em|ul|ol|li|table|tr|td|th|h[1-6])\b", t):
+        return True
+
+    # HTML-escaped Tags (&lt;p&gt; etc.)
+    if "&lt;" in t and re.search(r"(?i)&lt;\s*(p|div|span|br|a|strong|em|ul|ol|li|table|tr|td|th|h[1-6])\b", t):
+        return True
+
+    return False
+
+
+def _decode_html_maybe_twice(text: str) -> str:
+    """
+    Viele Quellen liefern (teilweise) HTML-escaped HTML. Wir unescapen max. 2x.
+    """
+    out = text or ""
+    for _ in range(2):
+        new = html.unescape(out)
+        if new == out:
+            break
+        out = new
+    return out
+
+
+def _sanitize_html_basic(raw_html: str) -> str:
+    """
+    Einfache Sanitization:
+    - entfernt <script>/<style>
+    - entfernt on* Event-Handler Attribute
+    - neutralisiert javascript: URLs
+    - lässt nur eine begrenzte Tag-Liste durch
+    - entfernt Attribute überall, außer bei <a href="...">
+    """
+    s = raw_html or ""
+
+    # 1) script/style entfernen
+    s = re.sub(r"(?is)<\s*(script|style)\b[^>]*>.*?<\s*/\s*\1\s*>", "", s)
+
+    # 2) on* handler entfernen (onclick=..., onload=..., etc.)
+    s = re.sub(r"(?i)\s+on\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", "", s)
+
+    # 3) javascript: in href/src neutralisieren
+    s = re.sub(r"(?i)\b(href|src)\s*=\s*(['\"])javascript:[^'\"]*\2", r"\1=\2#\2", s)
+
+    # 4) Nur erlaubte Tags zulassen – nicht erlaubte Tags escapen
+    def _filter_tag(m: re.Match) -> str:
+        tag = m.group(0)
+        mname = re.match(r"(?is)<\s*/?\s*([a-z0-9]+)", tag)
+        if not mname:
+            return html.escape(tag)
+        name = mname.group(1).lower()
+        if name in _ALLOWED_TAGS:
+            return tag
+        return html.escape(tag)
+
+    s = re.sub(r"(?is)<[^>]+>", _filter_tag, s)
+
+    # 5) Attribute entfernen (außer <a href="...">)
+    def _strip_attrs(m: re.Match) -> str:
+        full = m.group(0)  # z.B. <p class="x">
+        name = m.group(1).lower()
+        closing = full.startswith("</")
+        if closing:
+            return full  # </p> bleibt
+
+        if name == "a":
+            href_m = re.search(r'(?i)\bhref\s*=\s*(".*?"|\'.*?\')', full)
+            title_m = re.search(r'(?i)\btitle\s*=\s*(".*?"|\'.*?\')', full)
+            href = f" href={href_m.group(1)}" if href_m else ""
+            title = f" title={title_m.group(1)}" if title_m else ""
+            rel = ' rel="noopener noreferrer"'
+            target = ' target="_blank"'
+            return f"<a{href}{title}{target}{rel}>"
+
+        return f"<{name}>"
+
+    s = re.sub(r"(?is)<\s*([a-z0-9]+)\b[^>]*>", _strip_attrs, s)
+
+    # 6) Kontrollzeichen entfernen (wie im Text-Sanitizer)
+    cleaned_chars = []
+    for ch in s:
+        code = ord(ch)
+        if code < 32 and ch not in ("\t", "\n", "\r"):
+            continue
+        if 0xD800 <= code <= 0xDFFF:
+            continue
+        cleaned_chars.append(ch)
+
+    return "".join(cleaned_chars)
+
+
+def _render_readme_box(text: str, kw_color_pairs: List[Dict[str, str]]) -> None:
+    """
+    Rendert README im Scroll-Container.
+    - Wenn HTML: decoded + sanitized HTML anzeigen (ohne Keyword-Highlighting, um HTML nicht zu zerbrechen)
+    - Sonst: bisheriges Keyword-Highlighting (escaped + <mark>)
+    """
+    if _looks_like_html(text):
+        decoded = _decode_html_maybe_twice(text)
+        safe_html = _sanitize_html_basic(decoded)
+        st.markdown(
+            f"""
+            <div style="max-height:500px;overflow-y:auto;padding:0.75rem;
+            border:1px solid #ddd;border-radius:0.5rem;background-color:#fafafa;">
+            {safe_html}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.caption("Hinweis: README wurde als HTML erkannt und gerendert (Keyword-Highlighting ist für HTML deaktiviert).")
+        return
+
+    marked_text = _highlight_keywords_multi(text, kw_color_pairs) if kw_color_pairs else _sanitize_text_for_html(text)
+    st.markdown(
+        f"""
+        <div style="max-height:500px;overflow-y:auto;padding:0.75rem;
+        border:1px solid #ddd;border-radius:0.5rem;background-color:#fafafa;">
+        {marked_text}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# --------------------------------------------------------------------
 # Label-Optionen (2 oder 3 Ausprägungen) – mit Icons ✅ ❓ ❌
 # --------------------------------------------------------------------
 
@@ -556,7 +702,7 @@ def render():
         st.error(f"README `{filename}` konnte nicht von Google Drive geladen werden: {e}")
         return
 
-    # Frontmatter entfernen (optional) – und HTML-sicher machen
+    # Frontmatter entfernen (optional)
     text = _strip_frontmatter(raw_text)
 
     st.markdown(f"**Aktuelles README:** `{filename}` ({current_index+1}/{prog['total_docs']})")
@@ -580,17 +726,7 @@ def render():
             kw_color_pairs.append({"keyword": kw, "color": color})
 
     st.markdown("#### README-Inhalt (mit Keyword-Highlighting)")
-    marked_text = _highlight_keywords_multi(text, kw_color_pairs) if kw_color_pairs else _sanitize_text_for_html(text)
-
-    st.markdown(
-        f"""
-        <div style="max-height:500px;overflow-y:auto;padding:0.75rem;
-        border:1px solid #ddd;border-radius:0.5rem;background-color:#fafafa;">
-        {marked_text}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    _render_readme_box(text, kw_color_pairs)
 
     # Legende
     st.markdown("##### Legende für Highlights")
